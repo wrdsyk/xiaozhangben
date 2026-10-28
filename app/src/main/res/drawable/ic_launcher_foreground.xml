@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A champagne budget ring around a near-black receipt, echoing the app's hero card. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,32a22,22 0,1 1,-20.9 15.2"
+        android:strokeWidth="5"
+        android:strokeColor="#B8955C"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M46,43h16v22l-4,-2.6 -4,2.6 -4,-2.6 -4,2.6z"
+        android:strokeWidth="3.2"
+        android:strokeColor="#1C1C1E"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M50,50h8M50,56h8"
+        android:strokeWidth="3"
+        android:strokeColor="#1C1C1E"
+        android:strokeLineCap="round" />
+</vector>
