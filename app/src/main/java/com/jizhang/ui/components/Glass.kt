@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.innerShadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -43,7 +44,9 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.blur.HazeBlurStyle
 import dev.chrisbanes.haze.blur.HazeColorEffect
 import dev.chrisbanes.haze.blur.hazeBlur
+import dev.chrisbanes.haze.glass.GlassDefaults
 import dev.chrisbanes.haze.glass.GlassStyle
+import dev.chrisbanes.haze.glass.RefractionProfile
 import dev.chrisbanes.haze.glass.hazeGlass
 import kotlinx.coroutines.delay
 import java.io.File
@@ -127,6 +130,17 @@ fun Modifier.glass(
             .dropShadow(shape, Shadow(radius = p("sh2R", 8f).dp, color = c.shadowSoft.mul(a * p("sh2A", 1f)), spread = (-4).dp, offset = DpOffset(0.dp, p("sh2Y", 3f).dp)))
     }
     m = m.clip(shape)
+    // The reference lens (LiquidGlass.kt) where the device can run it: blur, edge refraction,
+    // dispersion and the two-lobe edge light in one pass, opaque inside the shape.
+    val liquid = if (backdrop && p("liquid", 1f) > .5f) Modifier.liquidGlass(corner, base = c.bg2, blur = blur * p("lgBlur", .7f), tint = p("lgTint", .14f)) else null
+    if (liquid != null) {
+        m = m.then(liquid)
+        if (fill != null) m = m.background(fill)
+        // The sweep gets a layer of its own, so its frames don't re-run the lens underneath.
+        if (glint) m = m.graphicsLayer().glint(c.glint)
+        return m
+    }
+    val lensEdge = if (p("rimMode", 1f) < 1.5f) Modifier.lensRim(corner, Color.White.copy(alpha = p("lensA", .9f - .35f * d))) else null
     if (haze != null && backdrop) {
         val input = HazeInput.Backdrop(haze)
         m = when {
@@ -135,6 +149,20 @@ fun Modifier.glass(
                     GlassStyle {
                         shape(shape)
                         tint(Color.Transparent)
+                        // After the reference lens: the backdrop just inside the edge folds into a
+                        // compressed mirror ring, a faint dispersion fringe, lit from the upper left,
+                        // and no dark band along the inside of the edge.
+                        optics(
+                            GlassDefaults.optics.copy(
+                                refractionProfile = RefractionProfile.Edge(16.dp),
+                                refractionDisplacement = 40.dp,
+                                refractionFoldStrength = .45f,
+                            ),
+                        )
+                        chromaticAberrationStrength(.12f)
+                        chromaMultiplier(1.4f)
+                        edgeShadow(Color.Transparent)
+                        lightPosition(Alignment.TopStart)
                         t["gWhite"]?.let { whitePoint(it) }
                         t["gSpec"]?.let { specularIntensity(it) }
                         t["gEdge"]?.let { edgeShadow(Color.Black.copy(alpha = it)) }
@@ -193,7 +221,8 @@ fun Modifier.glass(
     }
     if (own) {
         val hiA = p("hiA", 0f)
-        val dkA = p("dkA", .14f)
+        // The lens edge has no dark band inside it; the shade stays only for the fallback rim.
+        val dkA = p("dkA", if (lensEdge != null) 0f else .14f)
         val bloomA = p("bloomA", 0f)
         if (hiA > 0f) {
             m = m.innerShadow(shape, Shadow(radius = p("hiR", 1.5f).dp, color = Color.White.copy(alpha = hiA), offset = DpOffset(p("hiX", 0f).dp, p("hiY", 1.5f).dp)))
@@ -207,6 +236,7 @@ fun Modifier.glass(
     }
     if (glint) m = m.glint(c.glint)
     if (!own) return m
+    if (lensEdge != null) return m.then(lensEdge)
     return if (p("rimMode", 1f) < .5f) {
         m.border(p("rimW", 1.5f).dp, c.rim(), shape)
     } else {
@@ -396,8 +426,9 @@ private fun Modifier.glint(color: Color): Modifier {
  * The finish for a solid, dark button: the glass's lit rim, so a button and a card share one light
  * and the button gets a lit upper edge instead of a white line drawn all round it.
  */
+@Composable
 fun Modifier.solidEdge(corner: Dp): Modifier =
-    rim(
+    lensRim(corner, Color.White.copy(alpha = .55f), back = .6f, glowAlpha = .3f) ?: rim(
         corner, .8.dp,
         lit = Color.White.copy(alpha = .5f), dark = Color.Transparent, bright = Color.White.copy(alpha = .2f),
         fadeLit = .34f, hair = Color.Transparent, hairW = 0.dp,
@@ -419,9 +450,10 @@ fun Modifier.liftedPill(corner: Dp, base: Color): Modifier {
             .innerShadow(shape, Shadow(radius = 10.dp, color = Color.White.copy(alpha = .2f - .14f * d)))
             .border(.5.dp, Color.White.copy(alpha = .55f - .35f * d), shape)
     }
-    return this
+    val m = this
         .clip(shape)
         .background(Brush.verticalGradient(listOf(base.mul(1.08f), base.mul(.9f))))
+    return m.lensRim(corner, Color.White.copy(alpha = .95f - .5f * c.darkness), glowAlpha = .4f) ?: m
         .innerShadow(shape, Shadow(radius = 1.dp, color = Color.White.copy(alpha = .9f - .6f * c.darkness), offset = DpOffset(0.dp, 1.dp)))
         .innerShadow(shape, Shadow(radius = 1.5.dp, color = c.shadow.mul(.12f), offset = DpOffset(0.dp, (-1).dp)))
 }
@@ -449,12 +481,13 @@ fun Modifier.chip(corner: Dp, strong: Boolean = false): Modifier {
             .innerShadow(shape, Shadow(radius = 0.dp, color = c.chipEdge, offset = DpOffset(0.dp, 1.dp)))
             .border(0.5.dp, c.chipEdge, shape)
     } else {
-        // A raised key: lighter at the top than at the bottom, lit along its upper edge, shaded
-        // below, and lifted off the pane by a small shadow. Nothing runs round the whole edge.
-        this
+        // A small pane: lighter at the top than at the bottom, lifted off the card by a small
+        // shadow, and lit at its edge like the big panes (the lens edge where there is one).
+        val m = this
             .dropShadow(shape, Shadow(radius = 6.dp, color = c.shadowSoft.mul(.7f), spread = (-1).dp, offset = DpOffset(0.dp, 2.dp)))
             .clip(shape)
             .background(Brush.verticalGradient(listOf(base.mul(1.4f), base.mul(.7f))))
+        m.lensRim(corner, Color.White.copy(alpha = .9f - .45f * d), glowAlpha = .4f) ?: m
             .innerShadow(shape, Shadow(radius = 1.dp, color = Color.White.copy(alpha = .9f - .6f * d), offset = DpOffset(0.dp, 1.dp)))
             .innerShadow(shape, Shadow(radius = 1.5.dp, color = c.shadow.mul(.15f), offset = DpOffset(0.dp, (-1).dp)))
     }

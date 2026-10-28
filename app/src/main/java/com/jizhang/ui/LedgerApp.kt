@@ -85,7 +85,12 @@ import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalEntrancePlayed
 import com.jizhang.ui.components.LocalGlassFinish
+import com.jizhang.ui.components.LiquidBackdrop
 import com.jizhang.ui.components.LocalHazeState
+import com.jizhang.ui.components.LocalLiquidBackdrop
+import com.jizhang.ui.components.LocalLiquidOverContent
+import com.jizhang.ui.components.liquidContent
+import com.jizhang.ui.components.liquidSource
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.liftedPill
 import com.jizhang.ui.components.solidEdge
@@ -132,6 +137,7 @@ fun LedgerApp(vm: LedgerViewModel) {
             navDark = { reveal.barIsDark(top = false, targetDark = c.isDark) },
         )
         val haze = rememberHazeState()
+        val liquid = remember { LiquidBackdrop() }
         val scope = rememberCoroutineScope()
         var tab by rememberSaveable { mutableStateOf(Tab.Home) }
         var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -170,11 +176,12 @@ fun LedgerApp(vm: LedgerViewModel) {
         CompositionLocalProvider(
             LocalHazeState provides haze,
             LocalGlassFinish provides state.settings.glass,
+            LocalLiquidBackdrop provides liquid,
             LocalEntrancePlayed provides entrancePlayed,
             LocalFormSheet provides form,
         ) {
             Box(Modifier.fillMaxSize().themeReveal(reveal).background(c.bg0)) {
-                AmbientBackground(Modifier.fillMaxSize().hazeSource(haze))
+                AmbientBackground(Modifier.fillMaxSize().hazeSource(haze).liquidSource(liquid))
 
                 SharedTransitionLayout(Modifier.fillMaxSize()) {
                     AnimatedContent(
@@ -189,7 +196,8 @@ fun LedgerApp(vm: LedgerViewModel) {
                                     // Frosted glass shows the list passing under the nav bar and the
                                     // sheets. Cards inside the screens still blur only the background:
                                     // a backdrop takes the sources behind its nearest source (zIndex < 1).
-                                    modifier = if (state.settings.glass == GlassFinish.Frost) Modifier.hazeSource(haze, zIndex = 1f) else Modifier,
+                                    // 晶透 records the content for the nav bar's lens instead.
+                                    modifier = if (state.settings.glass == GlassFinish.Frost) Modifier.hazeSource(haze, zIndex = 1f) else Modifier.liquidContent(liquid),
                                     targetState = tab,
                                     transitionSpec = {
                                         (fadeIn(Motion.fade()) + slideInVertically(Motion.offset) { it / 30 })
@@ -242,13 +250,15 @@ fun LedgerApp(vm: LedgerViewModel) {
                                             },
                                         ),
                                 )
-                                BottomBar(
-                                    tab = tab,
-                                    onTab = { tab = it },
-                                    onAdd = { sheet = SheetRequest(++sheetSeq, null, fabCenter) },
-                                    onFabPositioned = { fabCenter = it },
-                                    modifier = Modifier.align(Alignment.BottomCenter),
-                                )
+                                CompositionLocalProvider(LocalLiquidOverContent provides true) {
+                                    BottomBar(
+                                        tab = tab,
+                                        onTab = { tab = it },
+                                        onAdd = { sheet = SheetRequest(++sheetSeq, null, fabCenter) },
+                                        onFabPositioned = { fabCenter = it },
+                                        modifier = Modifier.align(Alignment.BottomCenter),
+                                    )
+                                }
                             }
                         } else {
                             val record = state.allRecords.firstOrNull { it.id == id }
