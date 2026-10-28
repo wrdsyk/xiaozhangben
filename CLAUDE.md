@@ -59,7 +59,7 @@ Personal Android bookkeeping app, for the owner's own use only. It has no server
 ## Forms and overlays
 - Never use `AlertDialog`/`DatePickerDialog`. They open in a separate window, so they can't blur the app, and they don't match the design.
   - Open a glass bottom sheet with `LocalFormSheet.current.open { s -> … }`.
-  - Build it from `FormSheet.kt` pieces: `FormTitle`, `FormField`, `Segmented`, `ChoiceChips`, `QuickPicks`, `FormActions`.
+  - Build it from `FormSheet.kt` pieces: `FormTitle`, `FormField`, `Segmented`, `ChoiceChips`, `FormActions`.
   - Ready-made forms live in `ui/forms/Forms.kt`. Dates use `DateWheel`.
 - Full-screen overlays (add sheet, form host) are stacked in `LedgerApp`. A later `BackHandler` wins, so any handler under an open form checks `!LocalFormSheet.current.isOpen`. Handlers inside a form that need back first (e.g. note chips in edit mode) take `backClaims`.
 

@@ -51,6 +51,9 @@ class MonthSummaryTest {
         assertNull(shares.last().category)
         assertEquals(3000, shares.last().cents) // Home 2000 + Med 1000
         assertEquals(1f, shares.sumOf { it.fraction.toDouble() }.toFloat(), 1e-4f)
+        // The merged slice names what it stands for, so a real "其他" can't be mistaken for it.
+        assertEquals("其余 2 类", shares.last().label)
+        assertEquals(2, shares.last().merged)
     }
 
     @Test fun groupsByDayNewestFirst() {

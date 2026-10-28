@@ -79,8 +79,8 @@ fun Modifier.glass(
     var m = this
     if (shadow) {
         m = m
-            .dropShadow(shape, Shadow(radius = 32.dp, color = c.shadow, spread = (-16).dp, offset = DpOffset(0.dp, 12.dp)))
-            .dropShadow(shape, Shadow(radius = 6.dp, color = c.shadowSoft, spread = (-3).dp, offset = DpOffset(0.dp, 2.dp)))
+            .dropShadow(shape, Shadow(radius = 36.dp, color = c.shadow, spread = (-18).dp, offset = DpOffset(0.dp, 14.dp)))
+            .dropShadow(shape, Shadow(radius = 8.dp, color = c.shadowSoft, spread = (-4).dp, offset = DpOffset(0.dp, 3.dp)))
     }
     m = m.clip(shape)
     if (haze != null && backdrop) {
@@ -107,11 +107,15 @@ fun Modifier.glass(
     val highlight = .95f - .55f * c.darkness
     m = m
         .background(fill ?: Brush.linearGradient(listOf(c.glassTop, c.glassBottom), start = Offset.Zero, end = Offset(600f, 900f)))
-        .innerShadow(shape, Shadow(radius = 1.dp, color = Color.White.copy(alpha = highlight), offset = DpOffset(0.dp, 1.dp)))
-        .innerShadow(shape, Shadow(radius = 1.dp, color = Color.White.copy(alpha = highlight * .37f), offset = DpOffset(0.dp, (-1).dp)))
-        .innerShadow(shape, Shadow(radius = 20.dp, color = Color.White.copy(alpha = .25f - .19f * c.darkness)))
+        // A lit top edge and a dark bottom one: that pair is what makes the pane read as a solid
+        // slab rather than a flat tint. Both are thin, so they stay a rim and not a smudge.
+        .innerShadow(shape, Shadow(radius = 1.5.dp, color = Color.White.copy(alpha = highlight), offset = DpOffset(0.dp, 1.5.dp)))
+        .innerShadow(shape, Shadow(radius = 2.dp, color = c.shadow.copy(alpha = .22f), offset = DpOffset(0.dp, (-1.5).dp)))
+        // A soft bloom inside the glass, kept faint: any stronger and it flattens the contrast
+        // that the two rims just created.
+        .innerShadow(shape, Shadow(radius = 20.dp, color = Color.White.copy(alpha = .14f - .1f * c.darkness)))
     if (glint) m = m.glint(c.glint)
-    return m.border(1.25.dp, c.rim(), shape)
+    return m.border(1.5.dp, c.rim(), shape)
 }
 
 /** A soft diagonal highlight that sweeps across every eight seconds. */

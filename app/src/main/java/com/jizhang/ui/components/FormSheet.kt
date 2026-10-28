@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -405,25 +404,5 @@ fun FormActions(
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         FormButton(secondary, ButtonKind.Secondary, Modifier.weight(1f), onClick = onSecondary)
         FormButton(primary, primaryKind, Modifier.weight(1.6f), enabled = primaryEnabled, onClick = onPrimary)
-    }
-}
-
-/** Small quick-fill pills, e.g. budget presets. Notes use [NoteChips]. */
-@Composable
-fun QuickPicks(items: List<String>, onPick: (String) -> Unit) {
-    val c = LedgerTheme.colors
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.forEach { item ->
-            Box(
-                Modifier
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(17.dp))
-                    .border(1.dp, c.hair, RoundedCornerShape(17.dp))
-                    .tap(label = item) { onPick(item) }
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text(item, fontSize = 13.sp, color = c.label) }
-        }
-        Spacer(Modifier.width(4.dp))
     }
 }

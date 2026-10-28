@@ -155,7 +155,7 @@ data class Trend(
     val averageLabel: String get() = granularity.averageLabel
 
     /** Top five categories in the period, the rest merged into one "其他" slice. */
-    val shares: List<CategoryShare> = sharesOf(expenses, totalCents)
+    val shares: List<CategoryShare> = CategoryShare.topOf(expenses, totalCents)
 
     /** Only for a period that has not begun; the picker never offers one. */
     val isEmpty: Boolean get() = buckets.isEmpty()
@@ -221,15 +221,6 @@ data class Trend(
             }
         }
 
-        private fun sharesOf(expenses: List<Record>, total: Long): List<CategoryShare> {
-            if (total <= 0) return emptyList()
-            val sorted = expenses.groupBy { it.category }
-                .map { (cat, list) -> cat to list.sumOf { it.amountCents } }
-                .sortedByDescending { it.second }
-            val top = sorted.take(5).map { (cat, cents) -> CategoryShare(cat, cents, cents.toFloat() / total) }
-            val restCents = sorted.drop(5).sumOf { it.second }
-            return if (restCents > 0) top + CategoryShare(null, restCents, restCents.toFloat() / total) else top
-        }
     }
 }
 

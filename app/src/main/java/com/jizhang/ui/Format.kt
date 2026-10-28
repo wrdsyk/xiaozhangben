@@ -34,3 +34,6 @@ fun hhmm(t: LocalDateTime) = "%02d:%02d".format(t.hour, t.minute)
 
 /** "2026年10月25日 19:10" */
 fun fullDateTime(t: LocalDateTime) = "${t.year}年${t.monthValue}月${t.dayOfMonth}日 ${hhmm(t)}"
+
+/** 0.3333 → "33.3%": one decimal, rounded half up, so a donut's labels read alike. */
+fun percentLabel(fraction: Float): String = String.format(java.util.Locale.ROOT, "%.1f%%", fraction * 100)

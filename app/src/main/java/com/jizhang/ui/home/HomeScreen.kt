@@ -55,7 +55,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.animate
@@ -665,6 +664,3 @@ private fun SharedTransitionScope.RecordRow(
         }
     }
 }
-
-/** Space the floating nav bar needs at the bottom of scrolling content. */
-val NavBarSpace: Dp = 62.dp + 24.dp + 16.dp

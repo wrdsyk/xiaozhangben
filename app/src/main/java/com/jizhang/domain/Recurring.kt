@@ -72,8 +72,6 @@ data class RecurringRule(
         }
     }
 
-    fun inRange(date: LocalDate): Boolean = !date.isBefore(start) && (end == null || !date.isAfter(end))
-
     /** Due days in (`after`, `until`], oldest first, at most [limit] of them. */
     fun dueDates(after: LocalDate, until: LocalDate, limit: Int = MAX_CATCH_UP): List<LocalDate> {
         val out = ArrayList<LocalDate>()

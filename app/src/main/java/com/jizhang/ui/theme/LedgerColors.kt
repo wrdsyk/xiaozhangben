@@ -57,6 +57,11 @@ data class LedgerColors(
     val silkMid: Color,
     val silkEnd: Color,
     val hues: List<Color>,
+    /**
+     * The merged "其余 N 类" slice of the category donut: a muted [sub], so it never matches one of
+     * [hues] (in particular not 其他's grey) and follows every theme without a value of its own.
+     */
+    val mergedSlice: Color = sub.copy(alpha = .55f),
     val tileTintAlpha: Float,
     /** 0 for light themes, 1 for dark ones; scales the few white highlights that must fade on dark. */
     val darkness: Float,

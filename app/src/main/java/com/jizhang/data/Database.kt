@@ -49,12 +49,6 @@ data class RecordEntity(
 
 @Dao
 interface RecordDao {
-    @Query("SELECT * FROM records WHERE occurredAt >= :from AND occurredAt < :to ORDER BY occurredAt DESC")
-    fun observeRange(from: Long, to: Long): Flow<List<RecordEntity>>
-
-    @Query("SELECT MIN(occurredAt) FROM records")
-    fun observeEarliest(): Flow<Long?>
-
     @Query("SELECT COUNT(*) FROM records WHERE demo = 1")
     fun observeDemoCount(): Flow<Int>
 

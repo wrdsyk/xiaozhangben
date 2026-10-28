@@ -40,6 +40,10 @@ import kotlinx.coroutines.launch
  * hole that grows from the tapped swatch until the new theme is fully uncovered. Only that overlay
  * redraws while the circle expands.
  *
+ * Recording is on demand: the frame is captured only while a switch is starting or running. Kept
+ * recording every frame, this modifier doubled every draw of the app and kept the GPU busy even on
+ * a screen that was standing still.
+ *
  * The overlay is drawn inside the recorded layer, so freezing the screen again (a second tap while
  * the first reveal is still running) captures exactly what is on screen and carries on from there.
  */
@@ -47,6 +51,9 @@ import kotlinx.coroutines.launch
 class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
     /** The screen as it looked before the switch; null whenever no reveal is running. */
     private var shot by mutableStateOf<ImageBitmap?>(null)
+
+    /** True while [capture] needs the next frames recorded; the only time idle draws cost a layer. */
+    private var capturing by mutableStateOf(false)
     private var origin by mutableStateOf(Offset.Zero)
     private var radius by mutableFloatStateOf(0f)
 
@@ -85,24 +92,14 @@ class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
     }
 
     private suspend fun reveal(at: Offset, currentDark: Boolean, apply: suspend () -> Unit) {
-        val size = layer.size
-        val frozen = if (size.width > 0 && size.height > 0) {
-            try {
-                layer.toImageBitmap()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-        } else {
-            null
-        }
+        val frozen = capture()
         if (frozen == null) {
             // Nothing to freeze (not drawn yet): switch without the show.
             shot = null
             apply()
             return
         }
+        val size = layer.size
         val w = size.width.toFloat()
         val h = size.height.toFloat()
         val far = maxOf(
@@ -132,6 +129,27 @@ class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
         shot = null
     }
 
+    /**
+     * Turns recording on for the next two frames and reads the frame back. The first frame is the
+     * one that starts drawing with [capturing] set; by the second the layer holds the picture, so
+     * nothing has to be recorded while the app is idle.
+     */
+    private suspend fun capture(): ImageBitmap? {
+        capturing = true
+        return try {
+            withFrameNanos { }
+            withFrameNanos { }
+            val size = layer.size
+            if (size.width > 0 && size.height > 0) layer.toImageBitmap() else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } finally {
+            capturing = false
+        }
+    }
+
     /** Draws no density-dependent sizes itself: [rimPx] is worked out before recording (see [record]). */
     internal fun DrawScope.drawCover(rimPx: Float) {
         val frozen = shot ?: return
@@ -147,6 +165,12 @@ class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
     }
 
     internal fun record(scope: ContentDrawScope) = with(scope) {
+        // Nothing to show: draw straight to the window. The layer is only worth its cost while a
+        // switch is being captured or animated.
+        if (shot == null && !capturing) {
+            drawContent()
+            return@with
+        }
         // Resolved out here: inside record {} the layer's draw scope takes its density from this
         // node's scope, which reads it back from the layer's, so dp.toPx() there recurses until
         // the stack overflows (the crash that closed the app on every theme tap in 0.5.0).

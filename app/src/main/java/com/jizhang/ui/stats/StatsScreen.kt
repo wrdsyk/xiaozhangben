@@ -82,7 +82,6 @@ import com.jizhang.LedgerState
 import com.jizhang.domain.Category
 import com.jizhang.domain.CategoryShare
 import com.jizhang.domain.Granularity
-import com.jizhang.domain.Hue
 import com.jizhang.domain.Period
 import com.jizhang.domain.Record
 import com.jizhang.domain.Trend
@@ -91,6 +90,7 @@ import com.jizhang.domain.formatCents
 import com.jizhang.domain.formatCentsShort
 import com.jizhang.ui.chipDate
 import com.jizhang.ui.dayLabel
+import com.jizhang.ui.percentLabel
 import com.jizhang.ui.components.AutoScroll
 import com.jizhang.ui.components.CategoryTile
 import com.jizhang.ui.components.Glyph
@@ -763,7 +763,7 @@ private fun ShareCard(
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
     val cents = remember(shares) { shares.map { it.cents } }
-    fun colorOf(s: CategoryShare) = s.category?.let(c::hue) ?: c.hue(Hue.Other)
+    fun colorOf(s: CategoryShare) = s.category?.let(c::hue) ?: c.mergedSlice
     Column(
         modifier.fillMaxWidth().glass(28.dp).padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -812,7 +812,7 @@ private fun ShareCard(
                         maxLines = 1,
                         softWrap = false,
                     )
-                    if (pick != null) Text("${(pick.fraction * 100).toInt()}%", fontSize = 11.sp, color = c.sub)
+                    if (pick != null) Text(percentLabel(pick.fraction), fontSize = 11.sp, color = c.sub)
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -831,7 +831,7 @@ private fun ShareCard(
                         Box(Modifier.size(8.dp).clip(CircleShape).background(colorOf(s).copy(alpha = if (dim) .35f else 1f)))
                         Spacer(Modifier.size(7.dp))
                         Text(s.label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (dim) c.sub else c.ink, modifier = Modifier.weight(1f))
-                        Text("${(s.fraction * 100).toInt()}%", style = numberStyle(12.sp, FontWeight.Normal, 0f), color = c.sub)
+                        Text(percentLabel(s.fraction), style = numberStyle(12.sp, FontWeight.Normal, 0f), color = c.sub)
                     }
                 }
             }
