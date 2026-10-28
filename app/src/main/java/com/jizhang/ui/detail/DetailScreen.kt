@@ -59,6 +59,8 @@ import com.jizhang.ui.theme.numberStyle
 import dev.chrisbanes.haze.HazeInput
 import dev.chrisbanes.haze.blur.HazeBlurStyle
 import dev.chrisbanes.haze.blur.hazeBlur
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.YearMonth
 
 /**
@@ -74,6 +76,11 @@ fun SharedTransitionScope.DetailScreen(
     onBack: () -> Unit,
     onEdit: (origin: Offset) -> Unit,
     onDelete: () -> Unit,
+    /**
+     * The record's month's records, for the category share of any category and of income. Optional:
+     * without it only a top-five spending category's share can be shown.
+     */
+    monthRecords: List<Record>? = null,
 ) {
     val c = LedgerTheme.colors
     val haze = LocalHazeState.current
@@ -149,12 +156,17 @@ fun SharedTransitionScope.DetailScreen(
                 }
             }
 
-            if (record.kind == EntryKind.Expense && YearMonth.from(record.date) == summary.month) {
-                val share = summary.fractionOf(record.category)
-                val own = if (summary.expenseCents > 0) record.amountCents.toFloat() / summary.expenseCents else 0f
+            // Share of the record's own month (the caller hands in that month's summary), of
+            // spending for an expense and of income for an income record.
+            val monthTotal = if (record.kind == EntryKind.Expense) summary.expenseCents else summary.incomeCents
+            if (monthTotal > 0 && YearMonth.from(record.date) == summary.month) {
+                val categoryCents = remember(record, summary, monthRecords) { categoryCentsOf(record, summary, monthRecords) }
+                val own = "这笔占本月$kindLabel ${formatShare(record.amountCents, monthTotal)}"
                 ShareCard(
-                    text = "这笔占本月支出 ${pct(own)} · ${record.category.label}共占 ${pct(share)}",
-                    fraction = share,
+                    text = if (categoryCents == null) own
+                    else "$own · ${record.category.label}共占 ${formatShare(categoryCents, monthTotal)}",
+                    // The bar shows the category's share; when that is unknown, the record's own.
+                    fraction = (categoryCents ?: record.amountCents).toFloat() / monthTotal,
                     modifier = later.padding(top = 14.dp),
                 )
             }
@@ -192,7 +204,32 @@ fun SharedTransitionScope.DetailScreen(
     }
 }
 
-private fun pct(f: Float) = "${(f * 100).toInt()}%"
+/**
+ * [part] of [whole] as a percentage with two decimals, rounded half up ("0.42%", "23.70%").
+ * Exact integer maths (no float drift). A share too small to show as 0.01% reads "<0.01%" so a
+ * real record never looks like it counts for nothing; a zero [whole] reads "0.00%".
+ */
+internal fun formatShare(part: Long, whole: Long): String {
+    if (whole <= 0 || part <= 0) return "0.00%"
+    val pct = BigDecimal(part.coerceAtMost(whole)).multiply(BigDecimal(100))
+        .divide(BigDecimal(whole), 2, RoundingMode.HALF_UP)
+    return if (pct.signum() == 0) "<0.01%" else "${pct.toPlainString()}%"
+}
+
+/**
+ * What [record]'s category adds up to in its month, among the same kind (spending or income), or
+ * null when that can't be told. [monthRecords] (that month's records) always can; without it
+ * only spending categories in the summary's top five can — the rest sit in its merged 其他 slice.
+ */
+internal fun categoryCentsOf(record: Record, summary: MonthSummary, monthRecords: List<Record>?): Long? {
+    if (monthRecords != null) {
+        return monthRecords
+            .filter { it.kind == record.kind && it.category.key == record.category.key && YearMonth.from(it.date) == summary.month }
+            .sumOf { it.amountCents }
+    }
+    if (record.kind != EntryKind.Expense) return null
+    return summary.shares.firstOrNull { it.category?.key == record.category.key }?.cents
+}
 
 @Composable
 private fun InfoRow(label: String, value: String, dim: Boolean = false) {

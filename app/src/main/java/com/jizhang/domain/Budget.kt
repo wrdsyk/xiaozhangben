@@ -35,14 +35,15 @@ data class Budget(
     val displayName: String get() = name.ifBlank { "$scopeLabel · ${period.label}" }
 }
 
-/** Progress-bar colour band: under 60% green, 60–90% yellow, above 90% (or over) red. */
+/** Progress colour band for bars and the ring: up to 50% green, 50–80% yellow, 80% and over red. */
 enum class BudgetLevel {
     Green, Yellow, Red;
 
     companion object {
+        /** The owner's bands, shared by the budget bars and the ring: up to 50%, under 80%, 80%+. */
         fun of(fraction: Float): BudgetLevel = when {
-            fraction < .6f -> Green
-            fraction <= .9f -> Yellow
+            fraction <= .5f -> Green
+            fraction < .8f -> Yellow
             else -> Red
         }
     }

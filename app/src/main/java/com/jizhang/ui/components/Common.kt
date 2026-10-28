@@ -1,5 +1,6 @@
 package com.jizhang.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -39,7 +40,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jizhang.domain.BudgetLevel
 import com.jizhang.domain.Category
+import com.jizhang.ui.budget.levelColor
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
@@ -117,11 +120,27 @@ fun CategoryTile(
     }
 }
 
-/** Budget ring (not a chart): a gradient arc of the share of budget used. */
+/**
+ * Colour band of the budget ring for [percent] used (the whole number the ring shows, so the
+ * colour and the digits never disagree): green up to 50%, yellow up to 80%, red from 80% on and
+ * beyond 100%, the same bands as [BudgetLevel] and the budget bars.
+ */
+fun ringLevel(percent: Int): BudgetLevel = when {
+    percent <= 50 -> BudgetLevel.Green
+    percent < 80 -> BudgetLevel.Yellow
+    else -> BudgetLevel.Red
+}
+
+/**
+ * Budget ring (not a chart): a gradient arc of the share of budget used, in the traffic-light
+ * colour of [ringLevel] (the same greens, yellows and reds as the budget bars).
+ */
 @Composable
 fun BudgetRing(fraction: Float, modifier: Modifier = Modifier, label: String = "预算已用") {
     val c = LedgerTheme.colors
     val sweep by animateFloatAsState(fraction.coerceIn(0f, 1f), Motion.layout(), label = "ring")
+    val percent = (fraction * 100).toInt()
+    val tone by animateColorAsState(c.levelColor(ringLevel(percent)), Motion.fade(), label = "ringLevel")
     Box(modifier.size(92.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(92.dp)) {
             val stroke = 9.dp.toPx()
@@ -130,9 +149,11 @@ fun BudgetRing(fraction: Float, modifier: Modifier = Modifier, label: String = "
             val topLeft = Offset(inset, inset)
             drawArc(c.track, 0f, 360f, false, topLeft, arcSize, style = Stroke(stroke))
             if (sweep > 0f) {
+                // Two tones of one colour (soft at the start, full at the far side), like the bars.
+                val soft = tone.copy(alpha = .6f)
                 rotate(-90f) {
                     drawArc(
-                        Brush.sweepGradient(listOf(c.ring1, c.ring2, c.ring1)),
+                        Brush.sweepGradient(listOf(soft, tone, soft)),
                         0f, 360f * sweep.coerceAtLeast(.001f), false, topLeft, arcSize,
                         style = Stroke(stroke, cap = StrokeCap.Round),
                     )
@@ -140,7 +161,7 @@ fun BudgetRing(fraction: Float, modifier: Modifier = Modifier, label: String = "
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("${(fraction * 100).toInt()}%", style = numberStyle(19.sp, FontWeight.Normal, 0f), color = c.ink)
+            Text("$percent%", style = numberStyle(19.sp, FontWeight.Normal, 0f), color = c.ink)
             Text(label, fontSize = 11.sp, color = c.sub)
         }
     }

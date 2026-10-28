@@ -7,11 +7,14 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +46,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,11 +91,13 @@ import com.jizhang.domain.formatCents
 import com.jizhang.domain.formatCentsShort
 import com.jizhang.ui.chipDate
 import com.jizhang.ui.dayLabel
+import com.jizhang.ui.components.AutoScroll
 import com.jizhang.ui.components.CategoryTile
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.Odometer
 import com.jizhang.ui.components.Segmented
+import com.jizhang.ui.components.chip
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.rise
 import com.jizhang.ui.components.tap
@@ -127,6 +134,9 @@ import ir.ehsannarmani.compose_charts.models.LabelHelperProperties
 import ir.ehsannarmani.compose_charts.models.Pie
 import java.time.LocalDate
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -162,6 +172,10 @@ fun StatsScreen(
     val period = pick?.let { Period.containing(granularity, LocalDate.ofEpochDay(it)) }?.takeIf { it in options } ?: current
     val trend = remember(state.allRecords, period, today) { Trend.of(state.allRecords, period, today) }
     val anchors = remember { MenuAnchors() }
+    // The donut slice picked, as an index into trend.shares (-1: none). It lives up here because the
+    // ranking below follows it; a new period (or granularity, or any change of the ledger that
+    // reshapes the shares) starts over with no slice picked.
+    var slice by remember(trend) { mutableIntStateOf(-1) }
     // A form opened above wins the back press; the menu only reacts while none is open.
     BackHandler(enabled = menuOpen && !LocalFormSheet.current.isOpen) { menuOpen = false }
     Column(
@@ -191,8 +205,8 @@ fun StatsScreen(
                 }
                 SummaryCard(trend, today, menuOpen, { menuOpen = !menuOpen }, anchors, Modifier.rise(1))
                 TrendCard(trend, Modifier.rise(2))
-                ShareCard(trend.shares, trend.totalCents, Modifier.rise(3))
-                RankingCard(trend, today, onOpenRecord, Modifier.rise(4))
+                ShareCard(trend.shares, trend.totalCents, slice, { slice = it }, Modifier.rise(3))
+                RankingCard(trend, trend.shares.getOrNull(slice), { slice = -1 }, today, onOpenRecord, Modifier.rise(4))
             }
             // Catches the tap that lands outside the menu; the content under it stays put.
             if (menuOpen) Box(Modifier.matchParentSize().pointerInput(Unit) { detectTapGestures { menuOpen = false } })
@@ -259,14 +273,18 @@ private fun SummaryCard(
                     Text(period.rangeLabel, fontSize = 12.sp, color = c.sub, maxLines = 1)
                 }
             }
-            Row(verticalAlignment = Alignment.Bottom) {
+            // Holds the width the column gives it: a total of ¥100,000+ glides sideways once (and
+            // can be dragged) instead of running under the average and income on the right.
+            AutoScroll(key = trend.totalCents to period, verticalAlignment = Alignment.Bottom) {
                 Text("¥", style = numberStyle(17.sp, FontWeight.Normal, 0f), color = c.ink, modifier = Modifier.padding(end = 3.dp, bottom = 4.dp))
                 Odometer(formatCents(trend.totalCents), numberStyle(32.sp, FontWeight.Light, -.03f), c.ink)
             }
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            LabeledValue(trend.averageLabel, "¥${formatCents(trend.averageCents)}", c.ink)
-            LabeledValue("收入", "¥${formatCents(trend.incomeCents)}", c.income)
+        Spacer(Modifier.width(10.dp))
+        // Capped, so big averages and incomes leave the total its room; each scrolls on its own.
+        Column(Modifier.widthIn(max = 132.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LabeledValue(trend.averageLabel, "¥${formatCents(trend.averageCents)}", c.ink, period)
+            LabeledValue("收入", "¥${formatCents(trend.incomeCents)}", c.income, period)
         }
     }
 }
@@ -365,11 +383,14 @@ private fun MenuRow(label: String, detail: String?, on: Boolean, onClick: () -> 
 }
 
 @Composable
-private fun LabeledValue(label: String, value: String, color: Color) {
+private fun LabeledValue(label: String, value: String, color: Color, period: Period) {
     val c = LedgerTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("$label ", fontSize = 12.sp, color = c.sub)
-        Text(value, style = numberStyle(12.sp, FontWeight.Medium, 0f), color = color)
+        Text("$label ", fontSize = 12.sp, color = c.sub, maxLines = 1)
+        // The label keeps its width; a value too long for the rest glides to its end once.
+        AutoScroll(key = value to period, verticalAlignment = Alignment.CenterVertically) {
+            Text(value, style = numberStyle(12.sp, FontWeight.Medium, 0f), color = color, maxLines = 1, softWrap = false)
+        }
     }
 }
 
@@ -409,10 +430,13 @@ private fun TrendCard(trend: Trend, modifier: Modifier) {
             Modifier.fillMaxWidth().glass(28.dp).padding(top = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.Bottom) {
-                Text("支出趋势", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink, modifier = Modifier.weight(1f))
-                Text(chartHint(g), fontSize = 12.sp, color = c.sub)
-            }
+            Text(
+                "支出趋势",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = c.ink,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            )
             if (buckets.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(164.dp), contentAlignment = Alignment.Center) {
                     Text("还没开始", fontSize = 13.sp, color = c.sub)
@@ -423,13 +447,6 @@ private fun TrendCard(trend: Trend, modifier: Modifier) {
         }
         if (buckets.isNotEmpty()) ScrubPopup(scrub.value, buckets, g, anchors, Modifier.matchParentSize())
     }
-}
-
-/** What one point of the line stands for. */
-private fun chartHint(g: Granularity) = when (g) {
-    Granularity.Year -> "按月"
-    Granularity.Month -> "按日"
-    Granularity.Week -> "按星期"
 }
 
 /** The popup card carries the numbers; Vico's own marker label stays empty and takes no room. */
@@ -717,21 +734,41 @@ private fun popupTitle(b: TrendBucket, g: Granularity): String =
 /** "26/10/17" */
 private fun shortDate(d: LocalDate) = "%02d/%02d/%02d".format(d.year % 100, d.monthValue, d.dayOfMonth)
 
-/** Category share donut (ComposeCharts): tap a slice or legend row to see its amount. */
+private val DonutSize = 132.dp
+private val RingWidth = 14.dp
+
+/** How far past the ring, into the hole and out beyond it, a finger still counts as on the ring. */
+private val RingReach = 14.dp
+
+/** A press that stays put this long starts scrubbing; lifting sooner is a tap. */
+private const val ScrubHoldMs = 170L
+
+/** How a touch on the donut turned out within [ScrubHoldMs]. */
+private enum class Press { Tap, Abandon, Hold }
+
+/**
+ * Category share donut (ComposeCharts). Tap a slice or a legend row to pick it, or press on the ring
+ * and slide round it (like the line chart's crosshair); [selected] is the picked slice, -1 for none.
+ * The ring dims the others and the centre shows the pick's amount and share; tapping it again, the
+ * centre, or the clear chip in the ranking lets it go.
+ */
 @Composable
-private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifier) {
+private fun ShareCard(
+    shares: List<CategoryShare>,
+    total: Long,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier,
+) {
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
-    var selected by remember(shares) { mutableIntStateOf(-1) }
+    val cents = remember(shares) { shares.map { it.cents } }
     fun colorOf(s: CategoryShare) = s.category?.let(c::hue) ?: c.hue(Hue.Other)
     Column(
         modifier.fillMaxWidth().glass(28.dp).padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("分类占比", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink, modifier = Modifier.weight(1f))
-            Text(if (shares.isEmpty()) "" else "点一下看金额", fontSize = 12.sp, color = c.sub)
-        }
+        Text("分类占比", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
         if (shares.isEmpty()) {
             Box(Modifier.fillMaxWidth().height(132.dp), contentAlignment = Alignment.Center) {
                 Text("没有支出", fontSize = 13.sp, color = c.sub)
@@ -739,9 +776,11 @@ private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifi
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(DonutSize).donutPicker(cents, selected, onSelect), contentAlignment = Alignment.Center) {
+                // The chart only draws: taps and slides are read by donutPicker around it, so its own
+                // tap callback stays unset.
                 PieChart(
-                    modifier = Modifier.size(132.dp),
+                    modifier = Modifier.size(DonutSize),
                     data = shares.mapIndexed { i, s ->
                         Pie(
                             label = s.label,
@@ -751,14 +790,9 @@ private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifi
                             selected = i == selected,
                         )
                     },
-                    onPieClick = { pie ->
-                        haptics.tick()
-                        val i = shares.indexOfFirst { it.label == pie.label && it.cents.toDouble() == pie.data }
-                        selected = if (selected == i) -1 else i
-                    },
                     selectedScale = 1.08f,
                     spaceDegree = 2f,
-                    style = Pie.Style.Stroke(width = 14.dp),
+                    style = Pie.Style.Stroke(width = RingWidth),
                     scaleAnimEnterSpec = Motion.layout(),
                     scaleAnimExitSpec = Motion.layout(),
                     colorAnimEnterSpec = Motion.fade(),
@@ -767,12 +801,16 @@ private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifi
                     labelHelperProperties = LabelHelperProperties(enabled = false),
                 )
                 val pick = shares.getOrNull(selected)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(pick?.label ?: "合计", fontSize = 11.sp, color = c.sub)
+                val amount = formatCentsShort(pick?.cents ?: total)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 84.dp)) {
+                    Text(pick?.label ?: "合计", fontSize = 11.sp, color = c.sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // Past eight characters (¥1,234,567) 15sp would touch the ring.
                     Text(
-                        formatCentsShort(pick?.cents ?: total),
-                        style = numberStyle(15.sp, FontWeight.Medium, -.02f),
+                        amount,
+                        style = numberStyle(if (amount.length > 8) 12.sp else 15.sp, FontWeight.Medium, -.02f),
                         color = c.ink,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                     if (pick != null) Text("${(pick.fraction * 100).toInt()}%", fontSize = 11.sp, color = c.sub)
                 }
@@ -785,7 +823,7 @@ private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifi
                             .height(24.dp)
                             .tap(label = s.label, pressedScale = .97f) {
                                 haptics.tick()
-                                selected = if (selected == i) -1 else i
+                                onSelect(if (selected == i) -1 else i)
                             },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -802,48 +840,173 @@ private fun ShareCard(shares: List<CategoryShare>, total: Long, modifier: Modifi
 }
 
 /**
- * Ranking of the period picked above: its ten largest single expenses, largest first. Rows open
- * the record.
+ * Reads touches on the donut ([cents] are the slices' amounts, in the order PieChart draws them:
+ * from 3 o'clock, clockwise, each as wide as its share) and reports the slice picked through
+ * [onSelect], -1 for none.
+ *  - A tap picks the slice under the finger, or lets it go when it is the picked one or the touch
+ *    is on the centre.
+ *  - A press that stays put for [ScrubHoldMs] starts scrubbing: the slice at the finger's angle is
+ *    picked as it slides round (the radius no longer matters), ticking each time it changes, and
+ *    letting go keeps it. Every move is consumed from then on, so the page does not scroll.
+ *  - A touch that moves before that is a scroll and is left alone, and so is one that starts well
+ *    off the ring: vertical flicks over the donut still scroll the page.
  */
 @Composable
-private fun RankingCard(trend: Trend, today: LocalDate, onOpenRecord: (Record) -> Unit, modifier: Modifier) {
+private fun Modifier.donutPicker(cents: List<Long>, selected: Int, onSelect: (Int) -> Unit): Modifier {
+    val haptics = rememberHaptics()
+    val shown by rememberUpdatedState(selected)
+    val report by rememberUpdatedState(onSelect)
+    return pointerInput(cents) {
+        val whole = cents.sum().toDouble()
+        val slop = viewConfiguration.touchSlop
+        val ring = RingWidth.toPx()
+        val reach = RingReach.toPx()
+        awaitEachGesture {
+            // PieChart's own tap handling already took this down event, hence not requireUnconsumed.
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val half = min(size.width, size.height) / 2f
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            // Inside `hole` is the donut's centre; past `rim` the finger is off the donut.
+            val hole = half - ring - reach
+            val rim = half + reach
+            fun radius(p: Offset) = hypot(p.x - cx, p.y - cy)
+            fun sliceAt(p: Offset): Int {
+                var deg = atan2((p.y - cy).toDouble(), (p.x - cx).toDouble()) * 180.0 / PI
+                if (deg < 0) deg += 360.0
+                var end = 0.0
+                cents.forEachIndexed { i, v ->
+                    end += v * 360.0 / whole
+                    if (deg < end) return i
+                }
+                return cents.lastIndex
+            }
+            if (whole <= 0.0 || radius(down.position) > rim) return@awaitEachGesture
+            val onHub = radius(down.position) < hole
+            val first = if (onHub) -1 else sliceAt(down.position)
+            // Tracked here: the state above only catches up on the next recomposition.
+            var now = shown
+            fun pick(i: Int) {
+                if (i == now) return
+                now = i
+                haptics.tick()
+                report(i)
+            }
+            val press = withTimeoutOrNull(ScrubHoldMs) {
+                var out: Press? = null
+                while (out == null) {
+                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                    out = when {
+                        change == null -> Press.Abandon
+                        !change.pressed -> Press.Tap
+                        (change.position - down.position).getDistance() > slop -> Press.Abandon
+                        else -> null
+                    }
+                }
+                out
+            } ?: Press.Hold
+            when (press) {
+                Press.Abandon -> return@awaitEachGesture
+                Press.Tap -> {
+                    pick(if (onHub || first == now) -1 else first)
+                    return@awaitEachGesture
+                }
+                Press.Hold -> Unit
+            }
+            val before = now
+            if (!onHub) pick(first)
+            var moved = false
+            while (true) {
+                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                change.consume()
+                if (!change.pressed) break
+                if ((change.position - down.position).getDistance() > slop) moved = true
+                // Through the centre the angle means nothing, so the pick stays where it was.
+                if (radius(change.position) >= hole) pick(sliceAt(change.position))
+            }
+            // Held and let go on the spot: a slow tap, so it lets go of a picked slice like a tap does.
+            if (!moved && (onHub || first == before)) pick(-1)
+        }
+    }
+}
+
+/** What the ranking lists: [rows] in order, and whether they are one category's only. */
+private data class RankView(val rows: List<Record>, val narrowed: Boolean)
+
+/**
+ * Ranking of the period picked above: its ten largest single expenses, largest first. With a donut
+ * slice picked ([share]) it lists only that slice's expenses, headed "排行榜 · 餐饮" with a chip that
+ * clears the pick. Rows open the record.
+ */
+@Composable
+private fun RankingCard(
+    trend: Trend,
+    share: CategoryShare?,
+    onClear: () -> Unit,
+    today: LocalDate,
+    onOpenRecord: (Record) -> Unit,
+    modifier: Modifier,
+) {
     val c = LedgerTheme.colors
+    val haptics = rememberHaptics()
+    val view = remember(trend, share) { RankView(trend.topExpenses(10, share), share != null) }
     Column(
         modifier.fillMaxWidth().glass(28.dp).padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // The chip is a 48dp target, so the header grows a little while it shows; that growth springs.
+        Row(Modifier.fillMaxWidth().animateContentSize(Motion.size), verticalAlignment = Alignment.CenterVertically) {
             Glyph(LedgerIcons.get("trophy"), 18.dp, c.ink)
             Spacer(Modifier.width(6.dp))
-            Text("排行榜", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
-            Spacer(Modifier.width(8.dp))
             Text(
-                "${trend.period.label(today)} · 单笔前 10",
-                fontSize = 12.sp,
-                color = c.sub,
+                if (share == null) "排行榜" else "排行榜 · ${share.label}",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = c.ink,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f),
+                modifier = if (share == null) Modifier else Modifier.weight(1f),
             )
+            if (share == null) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${trend.period.label(today)} · 单笔前 10",
+                    fontSize = 12.sp,
+                    color = c.sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            AnimatedVisibility(
+                visible = share != null,
+                enter = fadeIn(Motion.fade()) + scaleIn(Motion.layout(), initialScale = .8f),
+                exit = fadeOut(Motion.fade()) + scaleOut(Motion.layout(), targetScale = .8f),
+            ) {
+                ClearChip {
+                    haptics.tick()
+                    onClear()
+                }
+            }
         }
         AnimatedContent(
-            targetState = trend,
+            targetState = view,
             transitionSpec = {
                 (fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade()))
                     .using(SizeTransform(clip = false) { _, _ -> Motion.size })
             },
             label = "ranking",
-        ) { t ->
+        ) { v ->
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                val rows = t.topExpenses(10)
-                if (rows.isEmpty()) RankEmpty()
-                val max = rows.firstOrNull()?.amountCents ?: 0L
-                rows.forEachIndexed { i, r ->
+                if (v.rows.isEmpty()) RankEmpty()
+                val max = v.rows.firstOrNull()?.amountCents ?: 0L
+                v.rows.forEachIndexed { i, r ->
                     RankRow(
                         rank = i + 1,
                         title = r.title,
-                        meta = "${chipDate(r.date, today)} · ${r.category.label}",
+                        // The category is the list's own when narrowed to one: no need to repeat it.
+                        meta = if (v.narrowed) chipDate(r.date, today) else "${chipDate(r.date, today)} · ${r.category.label}",
                         cents = r.amountCents,
                         fraction = if (max > 0) r.amountCents.toFloat() / max else 0f,
                         tile = r.category,
@@ -851,6 +1014,25 @@ private fun RankingCard(trend: Trend, today: LocalDate, onOpenRecord: (Record) -
                     )
                 }
             }
+        }
+    }
+}
+
+/** "× 全部": back to the whole period's ranking. A 30dp pill inside a 48dp touch target. */
+@Composable
+private fun ClearChip(onClick: () -> Unit) {
+    val c = LedgerTheme.colors
+    Box(
+        Modifier.heightIn(min = 48.dp).tap(label = "显示全部分类", pressedScale = .94f, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            Modifier.height(30.dp).chip(15.dp).padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Glyph(LedgerIcons.get("close", 2.4f), 12.dp, c.ink)
+            Text("全部", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1)
         }
     }
 }

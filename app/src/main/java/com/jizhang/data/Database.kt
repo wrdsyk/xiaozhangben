@@ -95,7 +95,7 @@ interface RecordDao {
     )
     fun observeFrequentNotes(category: String, min: Int, limit: Int): Flow<List<String>>
 
-    /** Moves records of a deleted custom category into "其他". */
+    /** Moves records of a deleted custom category into the category the user picked. */
     @Query("UPDATE records SET category = :to WHERE category = :from")
     suspend fun reassign(from: String, to: String)
 

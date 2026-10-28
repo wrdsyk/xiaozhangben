@@ -43,10 +43,10 @@ class BudgetTest {
 
     @Test fun levelThresholds() {
         assertEquals(BudgetLevel.Green, BudgetLevel.of(0f))
-        assertEquals(BudgetLevel.Green, BudgetLevel.of(.59f))
-        assertEquals(BudgetLevel.Yellow, BudgetLevel.of(.6f))
-        assertEquals(BudgetLevel.Yellow, BudgetLevel.of(.9f))
-        assertEquals(BudgetLevel.Red, BudgetLevel.of(.91f))
+        assertEquals(BudgetLevel.Green, BudgetLevel.of(.5f))
+        assertEquals(BudgetLevel.Yellow, BudgetLevel.of(.51f))
+        assertEquals(BudgetLevel.Yellow, BudgetLevel.of(.79f))
+        assertEquals(BudgetLevel.Red, BudgetLevel.of(.8f))
         assertEquals(BudgetLevel.Red, BudgetLevel.of(1.4f))
     }
 

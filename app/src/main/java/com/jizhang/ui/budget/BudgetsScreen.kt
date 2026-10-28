@@ -76,7 +76,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
- * Progress colour for a [BudgetLevel]: green, then yellow from 60%, red above 90%. The category
+ * Progress colour for a [BudgetLevel]: green up to 50%, yellow to 80%, red from 80%. The category
  * hues are too muted to read as traffic lights (the "yellow" one is ochre brown), so these are
  * their own, lerped with the theme's darkness (0 light, 1 dark).
  */

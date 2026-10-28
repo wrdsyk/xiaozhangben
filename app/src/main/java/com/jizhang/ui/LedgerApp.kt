@@ -242,14 +242,19 @@ fun LedgerApp(vm: LedgerViewModel) {
                             val record = state.allRecords.firstOrNull { it.id == id }
                             if (record != null) {
                                 val recordMonth = java.time.YearMonth.from(record.date)
+                                // The record's own month, for its summary and for the category share on the page.
+                                val monthRecords = remember(state.allRecords, recordMonth) {
+                                    state.allRecords.filter { java.time.YearMonth.from(it.date) == recordMonth }
+                                }
                                 DetailScreen(
                                     record = record,
                                     summary = if (recordMonth == state.month) state.summary else com.jizhang.domain.MonthSummary.of(
                                         recordMonth,
-                                        state.allRecords.filter { java.time.YearMonth.from(it.date) == recordMonth },
+                                        monthRecords,
                                         state.settings.budgetCents,
                                         state.today,
                                     ),
+                                    monthRecords = monthRecords,
                                     animatedScope = animatedScope,
                                     onBack = { detailId = null },
                                     onEdit = { origin -> sheet = SheetRequest(++sheetSeq, record, origin) },

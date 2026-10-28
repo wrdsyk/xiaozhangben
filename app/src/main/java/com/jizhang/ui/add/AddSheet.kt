@@ -96,6 +96,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jizhang.domain.AmountInput
+import com.jizhang.CategoryUsage
 import com.jizhang.LedgerViewModel
 import com.jizhang.domain.Category
 import com.jizhang.domain.CategoryCatalog
@@ -238,13 +239,23 @@ private fun SheetContent(
         val k = existing?.kind ?: kind
         // Built-ins can't be deleted; once edited they can go back to how they shipped.
         val original = existing?.takeIf { !it.custom }?.let { Category.of(it.key) }
+        // A custom one asks where its bills go; counted now, while the sheet opens.
+        val usage = existing?.takeIf { it.custom }?.let(vm::categoryUsage) ?: CategoryUsage()
         form.open { s ->
             CategoryForm(
                 existing = existing,
                 kind = k,
                 taken = catalog.forKind(k).filter { it.key != existing?.key }.map { it.label }.toSet(),
                 onSave = { name, icon, hue, color -> vm.saveCategory(existing, name, k, icon, hue, color) },
-                onDelete = existing?.takeIf { it.custom }?.let { cat -> { vm.deleteCategory(cat) } },
+                onDelete = existing?.takeIf { it.custom }?.let { cat ->
+                    { target: Category ->
+                        vm.deleteCategory(cat, target)
+                        // If the deleted one was picked, stay with the category its bills move to.
+                        if (category.key == cat.key) category = target
+                    }
+                },
+                moveTargets = catalog.forKind(k).filter { it.key != existing?.key },
+                usage = usage,
                 onReset = existing?.takeIf { original != null && it != original }?.let { cat -> { vm.resetCategory(cat) } },
                 close = s::close,
             )

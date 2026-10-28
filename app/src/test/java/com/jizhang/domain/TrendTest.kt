@@ -500,4 +500,52 @@ class TrendTest {
         assertEquals(6, trend(records, week(d(10, 2))).shares.size)
         assertTrue(trend(records, week(today)).shares.isEmpty())
     }
+
+    @Test fun rankingCanBeNarrowedToOneSlice() {
+        val records = listOf(
+            r(Category.Food, 900, d(10, 6)),
+            r(Category.Food, 300, d(10, 7)),
+            r(Category.Transit, 5000, d(10, 8)),
+            r(Category.Food, 700, d(9, 30)), // last month
+            r(Category.Salary, 999999, d(10, 5)), // income never counts
+        )
+        val t = trend(records, month(10))
+        val food = t.shares.first { it.category == Category.Food }
+        assertEquals(listOf(900L, 300L), t.expensesOf(food).map { it.amountCents })
+        assertEquals(listOf(900L), t.topExpenses(1, food).map { it.amountCents })
+        assertTrue(t.expensesOf(food).all { it.category == Category.Food })
+
+        // No slice picked: the whole period, as before.
+        assertEquals(t.topExpenses(10), t.topExpenses(10, null))
+        assertEquals(listOf(5000L, 900L, 300L), t.topExpenses(10, null).map { it.amountCents })
+
+        // The slices together hold every expense once.
+        assertEquals(t.expenses.size, t.shares.sumOf { t.expensesOf(it).size })
+        assertEquals(t.totalCents, t.shares.sumOf { s -> t.expensesOf(s).sumOf { it.amountCents } })
+    }
+
+    @Test fun theMergedSliceRanksEverythingOutsideTheTopFive() {
+        val cats = listOf(Category.Food, Category.Transit, Category.Shop, Category.Daily, Category.Fun, Category.Home, Category.Med)
+        val records = cats.mapIndexed { i, c -> r(c, (7 - i) * 1000L, d(10, 2)) } + r(Category.Med, 500, d(10, 9))
+        val t = trend(records, month(10))
+        val rest = t.shares.last()
+        assertNull(rest.category)
+        // 居住 (2000) and 医疗 (1000 + 500) are the ones the top five left out.
+        assertEquals(listOf(2000L, 1000L, 500L), t.expensesOf(rest).map { it.amountCents })
+        assertEquals(setOf(Category.Home, Category.Med), t.expensesOf(rest).map { it.category }.toSet())
+        assertEquals(rest.cents, t.expensesOf(rest).sumOf { it.amountCents })
+        assertEquals(listOf(2000L, 1000L), t.topExpenses(2, rest).map { it.amountCents })
+    }
+
+    @Test fun aRealOtherCategoryAndTheMergedSliceStayApart() {
+        val big = listOf(Category.Food, Category.Transit, Category.Shop, Category.Daily, Category.Other)
+        val records = big.mapIndexed { i, c -> r(c, (9 - i) * 1000L, d(10, 2)) } +
+            r(Category.Fun, 800, d(10, 3)) + r(Category.Home, 700, d(10, 4))
+        val t = trend(records, month(10))
+        val real = t.shares.first { it.category == Category.Other }
+        val merged = t.shares.last()
+        assertNull(merged.category)
+        assertEquals(listOf(5000L), t.expensesOf(real).map { it.amountCents })
+        assertEquals(listOf(800L, 700L), t.expensesOf(merged).map { it.amountCents })
+    }
 }

@@ -163,6 +163,22 @@ data class Trend(
     /** The [n] largest single expenses in the period. */
     fun topExpenses(n: Int): List<Record> = expenses.take(n)
 
+    /**
+     * The period's single expenses behind one donut slice, largest first: the slice's category, or
+     * for the merged "其他" slice (no category) everything outside the categories [shares] names.
+     * Categories are matched by key, since a real "其他" may sit among the top five too.
+     */
+    fun expensesOf(share: CategoryShare): List<Record> {
+        val key = share.category?.key
+        if (key != null) return expenses.filter { it.category.key == key }
+        val shown = shares.mapNotNull { it.category?.key }.toSet()
+        return expenses.filter { it.category.key !in shown }
+    }
+
+    /** The [n] largest single expenses of one slice ([expensesOf]), or of the whole period for null. */
+    fun topExpenses(n: Int, share: CategoryShare?): List<Record> =
+        if (share == null) topExpenses(n) else expensesOf(share).take(n)
+
     companion object {
         private val largestFirst =
             compareByDescending<Record> { it.amountCents }.thenByDescending { it.occurredAt }.thenByDescending { it.id }

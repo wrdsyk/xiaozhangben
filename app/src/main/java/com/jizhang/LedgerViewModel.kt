@@ -79,6 +79,9 @@ data class LedgerState(
     val loaded: Boolean,
 )
 
+/** How many bills, recurring rules and category budgets depend on one category (see [LedgerViewModel.categoryUsage]). */
+data class CategoryUsage(val records: Int = 0, val rules: Int = 0, val budgets: Int = 0)
+
 /** A one-line message shown at the top; [undo] restores a deleted record. */
 data class ToastMessage(val id: Long, val text: String, val undo: RecordEntity? = null)
 
@@ -399,22 +402,35 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
         prefDao.upsertAll(order.mapIndexed { i, k -> (prefs[k] ?: CategoryPrefEntity(k)).copy(sortOrder = i) })
     }
 
-    /** Deletes a custom category; its records and recurring rules move to "其他", its budgets go. */
-    fun deleteCategory(category: Category) {
+    /** What hangs on a category: its bills, its recurring rules and the budgets limited to it. */
+    fun categoryUsage(category: Category) = CategoryUsage(
+        records = state.value.allRecords.count { it.category.key == category.key },
+        rules = recurring.value.count { it.category.key == category.key },
+        budgets = budgets.value.count { it.budget.category?.key == category.key },
+    )
+
+    /**
+     * Deletes a custom category. Its records and recurring rules move to [target], another category
+     * of the same kind ("其他" if that one has gone meanwhile); the budgets limited to it and its
+     * note chips are removed, all in one transaction.
+     */
+    fun deleteCategory(category: Category, target: Category) {
         if (!category.custom) return
         val id = category.key.removePrefix("c").toLongOrNull() ?: return
         viewModelScope.launch {
+            val cat = state.value.catalog
+            val dest = cat.forKind(category.kind).firstOrNull { it.key == target.key && it.key != category.key }
+                ?: cat.otherOf(category.kind)
             val moved = state.value.allRecords.count { it.category.key == category.key }
-            val other = Category.otherOf(category.kind).key
             db.withTransaction {
-                dao.reassign(category.key, other)
-                ruleDao.reassign(category.key, other)
+                dao.reassign(category.key, dest.key)
+                ruleDao.reassign(category.key, dest.key)
                 budgetDao.deleteForCategory(category.key)
                 chipDao.deleteForCategory(category.key)
                 prefDao.delete(category.key)
                 categoryDao.delete(id)
             }
-            showToast(if (moved > 0) "已删除 · $moved 笔移到「其他」" else "已删除分类 · ${category.label}")
+            showToast(if (moved > 0) "已删除 · $moved 笔移到「${dest.label}」" else "已删除分类 · ${category.label}")
         }
     }
 

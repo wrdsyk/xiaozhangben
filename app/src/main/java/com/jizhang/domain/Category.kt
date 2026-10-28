@@ -27,7 +27,7 @@ data class Category(
     /** A colour the user picked (ARGB); when set it replaces [hue] in every theme. */
     val color: Int? = null,
 ) {
-    /** The catch-all bucket of the same kind; records of a deleted custom category move here. */
+    /** The catch-all bucket of the same kind; the default home of a deleted custom category's records. */
     val isOther: Boolean get() = key == Other.key || key == OtherIncome.key
 
     companion object {

@@ -88,6 +88,7 @@ import com.jizhang.domain.EntryKind
 import com.jizhang.domain.Record
 import com.jizhang.domain.formatCents
 import com.jizhang.domain.formatSigned
+import com.jizhang.ui.components.AutoScroll
 import com.jizhang.ui.components.BudgetRing
 import com.jizhang.ui.components.CategoryTile
 import com.jizhang.ui.components.Glyph
@@ -386,9 +387,12 @@ private fun HeroCard(state: LedgerState, onOpenBudgets: () -> Unit, modifier: Mo
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("本月支出", fontSize = 13.sp, color = c.sub)
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text("¥", style = numberStyle(20.sp, FontWeight.Normal, 0f), color = c.ink, modifier = Modifier.padding(end = 4.dp, bottom = 5.dp))
-                    Odometer(formatCents(s.expenseCents), numberStyle(40.sp, FontWeight.Light, -.035f), c.ink)
+                // Six-figure totals outgrow the space beside the ring: the amount keeps its width,
+                // glides to the decimals and back once when it overflows, and can be dragged.
+                val amount = formatCents(s.expenseCents)
+                AutoScroll(amount, Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    Text("¥", style = numberStyle(20.sp, FontWeight.Normal, 0f), color = c.ink, modifier = Modifier.padding(end = 4.dp, bottom = 5.dp), maxLines = 1, softWrap = false)
+                    Odometer(amount, numberStyle(40.sp, FontWeight.Light, -.035f), c.ink)
                 }
                 val hint = when {
                     s.perDayLeftCents != null -> "月底前每天约可花 ¥${formatCents(s.perDayLeftCents)}"
@@ -416,7 +420,10 @@ private fun StatChip(label: String, value: String, modifier: Modifier, onClick: 
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(label, fontSize = 12.sp, color = c.sub)
-        Text(value, style = numberStyle(13.sp, FontWeight.Medium, -.02f), color = c.ink, maxLines = 1)
+        // A long figure keeps the chip's width: it glides to its end and back once, and can be dragged.
+        AutoScroll(value, Modifier.fillMaxWidth()) {
+            Text(value, style = numberStyle(13.sp, FontWeight.Medium, -.02f), color = c.ink, maxLines = 1, softWrap = false)
+        }
     }
 }
 

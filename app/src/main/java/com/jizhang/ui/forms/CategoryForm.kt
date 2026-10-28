@@ -1,5 +1,6 @@
 package com.jizhang.ui.forms
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,12 +43,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jizhang.CategoryUsage
 import com.jizhang.domain.Category
 import com.jizhang.domain.EntryKind
 import com.jizhang.domain.Hue
@@ -57,13 +63,13 @@ import com.jizhang.ui.components.FormField
 import com.jizhang.ui.components.FormLabel
 import com.jizhang.ui.components.FormTitle
 import com.jizhang.ui.components.Glyph
+import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.theme.IconLibrary
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
 import com.jizhang.ui.theme.rememberHaptics
-import kotlinx.coroutines.delay
 
 private const val NAME_MAX = 6
 private const val ICON_COLUMNS = 6
@@ -72,9 +78,10 @@ private const val SWATCH_COLUMNS = 6
 /**
  * Create a custom bill category or edit any category: name (up to 6 characters), colour and
  * icon, with a live tile preview. The last colour swatch is the user's own colour (palette +
- * RGB). Custom categories can be deleted (two taps; the view model moves their records to
- * "其他"); an edited built-in offers "恢复默认" instead. The icon picker takes whatever height
- * the sheet has left (at most ~300dp) and scrolls.
+ * RGB). Custom categories can be deleted: "删除" turns the sheet into a second step that asks
+ * which other category their bills and recurring rules move to ("其他" preselected) and says
+ * what else goes; an edited built-in offers "恢复默认" instead. The icon picker takes whatever
+ * height the sheet has left (at most ~300dp) and scrolls.
  */
 @Composable
 fun ColumnScope.CategoryForm(
@@ -84,8 +91,12 @@ fun ColumnScope.CategoryForm(
     taken: Set<String> = emptySet(),
     /** [color] is the user's own ARGB colour, or null for the theme [hue]. */
     onSave: (name: String, icon: String, hue: Hue, color: Int?) -> Unit,
-    /** Custom categories only. */
-    onDelete: (() -> Unit)?,
+    /** Custom categories only; gets the category the bills and rules move to. */
+    onDelete: ((target: Category) -> Unit)?,
+    /** The other categories of this kind a deleted one can move to, in grid order ("其他" among them). */
+    moveTargets: List<Category> = emptyList(),
+    /** What the deleted category takes with it, for the confirmation text. */
+    usage: CategoryUsage = CategoryUsage(),
     /** Built-ins that differ from their original: back to the original name, icon and colour. */
     onReset: (() -> Unit)? = null,
     close: () -> Unit,
@@ -102,12 +113,20 @@ fun ColumnScope.CategoryForm(
     /** Last custom colour, so leaving for a theme hue and coming back keeps it. */
     var lastCustom by remember { mutableStateOf(existing?.color) }
     var picking by remember { mutableStateOf(false) }
-    var arming by remember { mutableStateOf(false) }
-    LaunchedEffect(arming) {
-        if (arming) {
-            delay(3000)
-            arming = false
-        }
+    /** Delete step: pick where the bills go, then confirm. */
+    var deleting by remember { mutableStateOf(false) }
+    if (deleting && onDelete != null && existing != null) {
+        DeleteStep(
+            category = existing,
+            targets = moveTargets.filter { it.key != existing.key }.ifEmpty { listOf(Category.otherOf(kind)) },
+            usage = usage,
+            onConfirm = { target ->
+                onDelete(target)
+                close()
+            },
+            back = { deleting = false },
+        )
+        return
     }
     val trimmed = name.trim()
     val duplicate = trimmed in taken
@@ -121,7 +140,7 @@ fun ColumnScope.CategoryForm(
             duplicate -> "已经有叫「$trimmed」的分类了，换个名字吧"
             trimmed.length > NAME_MAX -> "名字最多 $NAME_MAX 个字"
             existing == null -> "名字最多 $NAME_MAX 个字，再挑个颜色和图标"
-            existing.custom -> "删除后，它的账单会移到「其他」"
+            existing.custom -> "删除时，可以选它的账单移到哪一类"
             onReset != null -> "改过的内置分类，随时可以恢复默认"
             else -> "内置分类也能改名字、颜色和图标"
         },
@@ -179,14 +198,10 @@ fun ColumnScope.CategoryForm(
     }
     when {
         onDelete != null -> Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FormButton(if (arming) "确认删除" else "删除", ButtonKind.Danger, Modifier.weight(1.1f)) {
-                if (arming) {
-                    onDelete()
-                    close()
-                } else {
-                    haptics.tick()
-                    arming = true
-                }
+            FormButton("删除", ButtonKind.Danger, Modifier.weight(1.1f)) {
+                focus.clearFocus()
+                haptics.tick()
+                deleting = true
             }
             FormButton("取消", ButtonKind.Secondary, Modifier.weight(1f), onClick = close)
             FormButton("保存", ButtonKind.Primary, Modifier.weight(1.3f), enabled = valid, onClick = save)
@@ -200,6 +215,116 @@ fun ColumnScope.CategoryForm(
             FormButton("保存", ButtonKind.Primary, Modifier.weight(1.3f), enabled = valid, onClick = save)
         }
         else -> FormActions(primary = "保存", primaryEnabled = valid, onPrimary = save, onSecondary = close)
+    }
+}
+
+/**
+ * Second step of deleting a custom category: where its bills and recurring rules go. [targets]
+ * are the other categories of its kind; "其他" starts selected. Says how many bills and rules
+ * move and that budgets limited to this category are removed. Back returns to the edit step.
+ */
+@Composable
+private fun ColumnScope.DeleteStep(
+    category: Category,
+    targets: List<Category>,
+    usage: CategoryUsage,
+    onConfirm: (Category) -> Unit,
+    back: () -> Unit,
+) {
+    val c = LedgerTheme.colors
+    // Back steps out of the confirmation, not out of the whole sheet.
+    val form = LocalFormSheet.current
+    DisposableEffect(form) {
+        form.backClaims++
+        onDispose { form.backClaims-- }
+    }
+    BackHandler(onBack = back)
+
+    val fallback = targets.firstOrNull { it.isOther } ?: targets.first()
+    var pick by remember { mutableStateOf(fallback.key) }
+    val target = targets.firstOrNull { it.key == pick } ?: fallback
+    val moving = usage.records > 0 || usage.rules > 0
+
+    FormTitle(
+        "删除「${category.label}」",
+        if (moving) "它的账单和定时记账要移到哪一类？" else "这个分类下还没有账单和定时记账",
+    )
+    if (moving) {
+        // Scrolls when a long list of categories outgrows the sheet, instead of pushing the buttons off it.
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FormLabel("移到")
+            TargetGrid(targets, pick) { pick = it.key }
+        }
+    }
+    Text(
+        deleteSummary(usage, target),
+        fontSize = 13.sp, color = c.sub, lineHeight = 19.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.opKey)
+            .padding(14.dp),
+    )
+    FormActions(
+        primary = "确认删除",
+        primaryKind = ButtonKind.Danger,
+        onPrimary = { onConfirm(target) },
+        secondary = "返回",
+        onSecondary = back,
+    )
+}
+
+/** "N 笔账单和 M 条定时记账将移到「X」" plus what happens to budgets; each part only when there is something. */
+private fun deleteSummary(usage: CategoryUsage, target: Category): String {
+    val moved = buildList {
+        if (usage.records > 0) add("${usage.records} 笔账单")
+        if (usage.rules > 0) add("${usage.rules} 条定时记账")
+    }
+    return buildList {
+        if (moved.isNotEmpty()) add(moved.joinToString("和") + "将移到「${target.label}」。")
+        if (usage.budgets > 0) add("限定在这个分类的 ${usage.budgets} 个预算会一并删除。")
+        if (isEmpty()) add("删除后不会影响已有的账。")
+    }.joinToString("")
+}
+
+/** The categories a deleted one can move to, as wrapping chips with their colour dot; one is selected. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TargetGrid(targets: List<Category>, selected: String, onSelect: (Category) -> Unit) {
+    val c = LedgerTheme.colors
+    val haptics = rememberHaptics()
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        targets.forEach { cat ->
+            val on = cat.key == selected
+            val bg by animateFloatAsState(if (on) 1f else 0f, Motion.fade(), label = "targetChip")
+            // 48dp to tap, drawn as a slimmer pill.
+            Box(
+                Modifier.height(48.dp).tap(label = cat.label) {
+                    if (!on) {
+                        haptics.tick()
+                        onSelect(cat)
+                    }
+                },
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(lerp(c.opKey, c.accent, bg))
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(lerp(c.hue(cat), c.onAccent, bg)))
+                    Text(
+                        cat.label,
+                        fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                        color = lerp(c.ink, c.onAccent, bg),
+                    )
+                }
+            }
+        }
     }
 }
 

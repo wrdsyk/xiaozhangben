@@ -132,7 +132,8 @@ class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
         shot = null
     }
 
-    internal fun DrawScope.drawCover() {
+    /** Draws no density-dependent sizes itself: [rimPx] is worked out before recording (see [record]). */
+    internal fun DrawScope.drawCover(rimPx: Float) {
         val frozen = shot ?: return
         val r = radius
         if (r <= .5f) {
@@ -142,13 +143,17 @@ class ThemeReveal internal constructor(private val layer: GraphicsLayer) {
         val hole = Path().apply { addOval(Rect(origin, r)) }
         clipPath(hole, ClipOp.Difference) { drawImage(frozen) }
         val rim = .5f * (1f - r / reach).coerceIn(0f, 1f)
-        if (rim > 0f) drawCircle(Color.White.copy(alpha = rim), r, origin, style = Stroke(1.5.dp.toPx()))
+        if (rim > 0f) drawCircle(Color.White.copy(alpha = rim), r, origin, style = Stroke(rimPx))
     }
 
     internal fun record(scope: ContentDrawScope) = with(scope) {
+        // Resolved out here: inside record {} the layer's draw scope takes its density from this
+        // node's scope, which reads it back from the layer's, so dp.toPx() there recurses until
+        // the stack overflows (the crash that closed the app on every theme tap in 0.5.0).
+        val rimPx = 1.5.dp.toPx()
         layer.record {
             this@with.drawContent()
-            drawCover()
+            drawCover(rimPx)
         }
         drawLayer(layer)
     }
