@@ -75,6 +75,18 @@ import com.jizhang.ui.theme.Motion
 import com.jizhang.ui.theme.numberStyle
 import com.jizhang.ui.theme.rememberHaptics
 import kotlin.math.abs
+import androidx.compose.animation.core.animate
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** What a form can do from inside its content. */
 interface FormScope {
@@ -131,6 +143,49 @@ fun FormSheetHost(controller: FormSheetController) {
                 .then(if (req != null) Modifier.pointerInput(Unit) { detectTapGestures { controller.close() } } else Modifier),
         )
     }
+    // Drag down to put the sheet away: the grabber works on every form, and a scrollable form also
+    // hands its over-scroll to the sheet (so pulling down at the top of a long list moves it).
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val dragScope = rememberCoroutineScope()
+    val dismissAt = with(LocalDensity.current) { 88.dp.toPx() }
+    val settle: () -> Unit = {
+        dragScope.launch {
+            // Past the threshold the sheet closes from where the finger left it (the exit slide
+            // carries on from there); short of it, it springs back.
+            if (dragY > dismissAt) controller.close()
+            else animate(dragY, 0f, animationSpec = Motion.layout()) { v, _ -> dragY = v }
+        }
+        Unit
+    }
+    // A new form opens at rest; the closed one keeps its offset while its exit slide runs.
+    LaunchedEffect(req?.id) { if (req != null) dragY = 0f }
+    val sheetDrag = remember(dragScope, dismissAt) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // Dragging back up first returns the sheet to its place.
+                if (source == NestedScrollSource.UserInput && available.y < 0f && dragY > 0f) {
+                    dragY = (dragY + available.y).coerceAtLeast(0f)
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                // Only what the list could not scroll: at its top, pulling down drags the sheet.
+                if (source == NestedScrollSource.UserInput && available.y > 0f) {
+                    dragY += available.y
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (dragY > 0f) settle()
+                return Velocity.Zero
+            }
+        }
+    }
+
     // A tall form (e.g. 定时记账) grows up to the status bar, never under it.
     Box(Modifier.fillMaxSize().statusBarsPadding().imePadding(), contentAlignment = Alignment.BottomCenter) {
         AnimatedVisibility(
@@ -143,6 +198,8 @@ fun FormSheetHost(controller: FormSheetController) {
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .offset { IntOffset(0, dragY.roundToInt().coerceAtLeast(0)) }
+                    .nestedScroll(sheetDrag)
                     .navigationBarsPadding()
                     .padding(horizontal = 10.dp, vertical = 10.dp)
                     .glass(32.dp, blur = 30.dp, fill = Brush.verticalGradient(listOf(base.copy(alpha = .9f), base.copy(alpha = .8f))))
@@ -151,9 +208,25 @@ fun FormSheetHost(controller: FormSheetController) {
                     .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                // The grabber is the handle: a tall strip, so it is easy to catch and drag.
                 Box(
-                    Modifier.align(Alignment.CenterHorizontally).size(36.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.track),
-                )
+                    Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onDragEnd = settle,
+                                onDragCancel = settle,
+                                onVerticalDrag = { change, amount ->
+                                    dragY = (dragY + amount).coerceAtLeast(0f)
+                                    change.consume()
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(36.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.track))
+                }
                 key(r.id) { r.content(this, scope) }
             }
         }

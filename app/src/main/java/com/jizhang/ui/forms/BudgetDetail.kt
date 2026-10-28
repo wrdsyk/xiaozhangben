@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -35,8 +38,8 @@ import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.numberStyle
 import java.time.LocalDate
 
-/** How many expenses the ranking lists; the rest are only counted. */
-private const val DETAIL_ROWS = 10
+/** Tallest the ranking grows before it scrolls inside itself. */
+private val RankingMaxHeight = 280.dp
 
 /**
  * One custom budget in detail: 已用 on top, the progress bar under it, then the expenses behind
@@ -55,7 +58,7 @@ fun BudgetDetailForm(
     val all = remember(progress, records) {
         b.expensesOf(records, today).sortedWith(compareByDescending<Record> { it.amountCents }.thenByDescending { it.occurredAt })
     }
-    val rows = all.take(DETAIL_ROWS)
+    val scroll = rememberScrollState()
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         FormTitle(b.displayName, "${b.period.label} ¥${formatCentsShort(b.amountCents)} · ${b.period.scope}已用")
@@ -90,15 +93,18 @@ fun BudgetDetailForm(
                     fontSize = 12.sp, color = c.sub, textAlign = TextAlign.End,
                 )
             }
-            if (rows.isEmpty()) {
+            if (all.isEmpty()) {
                 Box { Text("这段时间还没有支出", fontSize = 13.sp, color = c.sub) }
             } else {
-                rows.forEachIndexed { i, r -> DetailRow(i + 1, r, today) }
-                if (all.size > rows.size) {
-                    Text(
-                        "另有 ${all.size - rows.size} 笔未列出",
-                        fontSize = 12.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp),
-                    )
+                // The whole list, in its own scroller: a long month must not push the buttons off
+                // screen, and the sheet itself stays short enough to reach the scrim.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = RankingMaxHeight)
+                        .verticalScroll(scroll),
+                ) {
+                    all.forEachIndexed { i, r -> DetailRow(i + 1, r, today) }
                 }
             }
         }
