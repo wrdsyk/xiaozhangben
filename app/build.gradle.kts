@@ -16,8 +16,8 @@ android {
         targetSdk = 37
         // "owner/repo" whose GitHub Releases the in-app updater checks (gradle.properties); blank = off.
         buildConfigField("String", "UPDATE_REPO", "\"" + (project.findProperty("jizhang.updateRepo") ?: "") + "\"")
-        versionCode = 11
-        versionName = "0.5.6"
+        versionCode = 12
+        versionName = "0.5.7"
     }
 
     buildTypes {

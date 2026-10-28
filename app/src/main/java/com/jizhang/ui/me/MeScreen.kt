@@ -53,11 +53,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jizhang.BuildConfig
 import com.jizhang.LedgerState
 import com.jizhang.LedgerViewModel
+import com.jizhang.data.GlassFinish
 import com.jizhang.data.ThemeId
 import com.jizhang.domain.Hue
 import com.jizhang.domain.formatCentsShort
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
+import com.jizhang.ui.components.Segmented
 import com.jizhang.ui.forms.BackupForm
 import com.jizhang.ui.forms.ConfirmForm
 import com.jizhang.ui.forms.InfoForm
@@ -134,6 +136,15 @@ fun MeScreen(
                 Text("点一下即可切换", fontSize = 12.sp, color = c.sub)
             }
             ThemePicker(state.settings.theme, onPickTheme)
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("玻璃质感", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink, modifier = Modifier.weight(1f))
+                Segmented(
+                    options = GlassFinish.entries.map { it.label },
+                    selected = state.settings.glass.ordinal,
+                    onSelect = { vm.setGlass(GlassFinish.entries[it]) },
+                    modifier = Modifier.width(168.dp),
+                )
+            }
         }
         Column(Modifier.fillMaxWidth().rise(2).glass(26.dp).padding(horizontal = 16.dp, vertical = 2.dp)) {
             SettingRow("repeat", Hue.Transit, "定时记账", if (runningRules > 0) "$runningRules 条进行中" else "自动记重复的账", onOpenRecurring)

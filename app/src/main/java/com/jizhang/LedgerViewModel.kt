@@ -13,6 +13,7 @@ import com.jizhang.data.ImageStore
 import com.jizhang.data.RecurringEntity
 import com.jizhang.data.CustomCategoryEntity
 import com.jizhang.data.DemoData
+import com.jizhang.data.GlassFinish
 import com.jizhang.data.NoteChipEntity
 import com.jizhang.data.RecordEntity
 import com.jizhang.data.SharkFormatException
@@ -544,6 +545,8 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
     // Settings & budgets --------------------------------------------------------------------
 
     fun setTheme(theme: ThemeId) = viewModelScope.launch { container.settings.setTheme(theme) }
+
+    fun setGlass(finish: GlassFinish) = viewModelScope.launch { container.settings.setGlass(finish) }
 
     fun setBudget(cents: Long) = setTotalBudget(BudgetPeriod.Month, cents)
 

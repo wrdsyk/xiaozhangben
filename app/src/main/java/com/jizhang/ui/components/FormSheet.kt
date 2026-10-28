@@ -386,8 +386,7 @@ fun Segmented(
                 }
                 .width(slot)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape((height - 8.dp) / 2))
-                .background(Color.White.copy(alpha = .92f)),
+                .liftedPill((height - 8.dp) / 2, Color.White.copy(alpha = .92f)),
         )
         Row(Modifier.fillMaxSize().padding(horizontal = 4.dp)) {
             options.forEachIndexed { i, label ->
@@ -471,6 +470,7 @@ fun FormButton(
             .graphicsLayer { alpha = if (enabled) 1f else .45f }
             .clip(shape)
             .background(bg)
+            .then(if (kind == ButtonKind.Primary) Modifier.solidEdge(height / 2) else Modifier)
             .tap(label = text, enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

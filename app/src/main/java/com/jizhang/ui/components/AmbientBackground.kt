@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import com.jizhang.ui.theme.LedgerTheme
 
 /**
@@ -24,6 +26,16 @@ import com.jizhang.ui.theme.LedgerTheme
 @Composable
 fun AmbientBackground(modifier: Modifier = Modifier) {
     val c = LedgerTheme.colors
+    val t = Tune.of(LocalContext.current)
+    val orbSat = t["orbSat"] ?: (1f + .7f * (1f - c.darkness))
+    val orbA = t["orbA"] ?: 1f
+    fun Color.boosted(): Color {
+        if (orbSat == 1f && orbA == 1f) return this
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(toArgb(), hsv)
+        hsv[1] = (hsv[1] * orbSat).coerceIn(0f, 1f)
+        return Color(android.graphics.Color.HSVToColor(hsv)).copy(alpha = (alpha * orbA).coerceIn(0f, 1f))
+    }
     Box(
         modifier.drawBehind {
             val sx = size.width / 390f
@@ -34,9 +46,9 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
                     start = Offset(size.width * .3f, 0f), end = Offset(size.width * .7f, size.height),
                 ),
             )
-            orb(c.orb1, 70f, 90f, 190f, 70f, sx, sy)
-            orb(c.orb2, 360f, 330f, 160f, 72f, sx, sy)
-            orb(c.orb3, 150f, 690f, 210f, 80f, sx, sy)
+            orb(c.orb1.boosted(), 70f, 90f, 190f, 70f, sx, sy)
+            orb(c.orb2.boosted(), 360f, 330f, 160f, 72f, sx, sy)
+            orb(c.orb3.boosted(), 150f, 690f, 210f, 80f, sx, sy)
             ribbon(c.silkStart, c.silkMid, c.silkEnd, sx, sy)
         },
     )

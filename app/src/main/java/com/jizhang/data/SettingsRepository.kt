@@ -25,8 +25,21 @@ enum class ThemeId(val key: String, val label: String) {
     }
 }
 
+/** How glass surfaces are finished. Keys are stored, so never rename one. */
+enum class GlassFinish(val key: String, val label: String) {
+    /** Thin glass with a lit rim and Haze's lens shader on the big surfaces. */
+    Crystal("crystal", "晶透"),
+    /** Frosted: a wider blur that also takes in the list scrolling behind the nav bar and sheets. */
+    Frost("frost", "雾透");
+
+    companion object {
+        fun of(key: String?): GlassFinish = entries.firstOrNull { it.key == key } ?: Crystal
+    }
+}
+
 data class Settings(
     val theme: ThemeId = ThemeId.Pearl,
+    val glass: GlassFinish = GlassFinish.Crystal,
     /** Monthly total budget; drives the home ring. */
     val budgetCents: Long = DEFAULT_BUDGET_CENTS,
     /** Yearly / daily total budgets; 0 = not set. */
@@ -57,6 +70,7 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class SettingsRepository(private val context: Context) {
     private val themeKey = stringPreferencesKey("theme")
+    private val glassKey = stringPreferencesKey("glass_finish")
     private val budgetKey = longPreferencesKey("budget_cents")
     private val yearBudgetKey = longPreferencesKey("year_budget_cents")
     private val dayBudgetKey = longPreferencesKey("day_budget_cents")
@@ -65,6 +79,7 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
         Settings(
             theme = ThemeId.of(p[themeKey]),
+            glass = GlassFinish.of(p[glassKey]),
             budgetCents = p[budgetKey] ?: Settings.DEFAULT_BUDGET_CENTS,
             yearBudgetCents = p[yearBudgetKey] ?: 0,
             dayBudgetCents = p[dayBudgetKey] ?: 0,
@@ -72,6 +87,8 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setTheme(theme: ThemeId) = context.dataStore.edit { it[themeKey] = theme.key }
+
+    suspend fun setGlass(finish: GlassFinish) = context.dataStore.edit { it[glassKey] = finish.key }
 
     suspend fun setBudget(cents: Long) = context.dataStore.edit { it[budgetKey] = cents }
 

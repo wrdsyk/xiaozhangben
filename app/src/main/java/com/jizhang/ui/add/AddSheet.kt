@@ -115,6 +115,7 @@ import com.jizhang.ui.components.PhotoThumb
 import androidx.compose.ui.text.style.TextOverflow
 import com.jizhang.ui.components.chip
 import com.jizhang.ui.components.glass
+import com.jizhang.ui.components.liftedPill
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
@@ -420,8 +421,7 @@ private fun KindToggle(kind: EntryKind, onChange: (EntryKind) -> Unit) {
                 .width(80.dp)
                 .height(36.dp)
                 .dropShadow(RoundedCornerShape(18.dp), Shadow(radius = 16.dp, color = c.shadow, spread = (-6).dp, offset = DpOffset(0.dp, 6.dp)))
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.White.copy(alpha = .92f)),
+                .liftedPill(18.dp, Color.White.copy(alpha = .92f)),
         )
         Row(Modifier.fillMaxSize()) {
             listOf(EntryKind.Expense to "支出", EntryKind.Income to "收入").forEach { (k, label) ->

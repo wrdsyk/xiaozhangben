@@ -56,7 +56,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
-import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -74,6 +73,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jizhang.LedgerViewModel
 import com.jizhang.ToastMessage
+import com.jizhang.data.GlassFinish
 import com.jizhang.data.ThemeId
 import com.jizhang.ui.add.AddSheet
 import com.jizhang.ui.add.SheetRequest
@@ -84,8 +84,11 @@ import com.jizhang.ui.components.FormSheetHost
 import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalEntrancePlayed
+import com.jizhang.ui.components.LocalGlassFinish
 import com.jizhang.ui.components.LocalHazeState
 import com.jizhang.ui.components.glass
+import com.jizhang.ui.components.liftedPill
+import com.jizhang.ui.components.solidEdge
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.detail.DetailScreen
 import com.jizhang.ui.home.HomeScreen
@@ -166,6 +169,7 @@ fun LedgerApp(vm: LedgerViewModel) {
 
         CompositionLocalProvider(
             LocalHazeState provides haze,
+            LocalGlassFinish provides state.settings.glass,
             LocalEntrancePlayed provides entrancePlayed,
             LocalFormSheet provides form,
         ) {
@@ -182,6 +186,10 @@ fun LedgerApp(vm: LedgerViewModel) {
                         if (id == null) {
                             Box(Modifier.fillMaxSize()) {
                                 AnimatedContent(
+                                    // Frosted glass shows the list passing under the nav bar and the
+                                    // sheets. Cards inside the screens still blur only the background:
+                                    // a backdrop takes the sources behind its nearest source (zIndex < 1).
+                                    modifier = if (state.settings.glass == GlassFinish.Frost) Modifier.hazeSource(haze, zIndex = 1f) else Modifier,
                                     targetState = tab,
                                     transitionSpec = {
                                         (fadeIn(Motion.fade()) + slideInVertically(Motion.offset) { it / 30 })
@@ -357,9 +365,7 @@ private fun BottomBar(
                     .offset { IntOffset((slot.toPx() * lens).toInt(), 0) }
                     .width(slot)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(c.lens)
-                    .innerShadow(RoundedCornerShape(26.dp), Shadow(0.dp, Color.White.copy(alpha = 1f - .7f * c.darkness), offset = DpOffset(0.dp, 1.dp))),
+                    .liftedPill(26.dp, c.lens),
             )
             Row(Modifier.fillMaxSize()) {
                 Tab.entries.forEach { t ->
@@ -383,7 +389,7 @@ private fun BottomBar(
                 .dropShadow(fabShape, Shadow(28.dp, c.accentShadow, spread = (-12).dp, offset = DpOffset(0.dp, 14.dp)))
                 .clip(fabShape)
                 .background(Brush.verticalGradient(0f to lerp(c.accent, Color.White, c.sheen.alpha), .55f to c.accent))
-                .innerShadow(fabShape, Shadow(1.dp, Color.White.copy(alpha = .35f + .25f * c.darkness), offset = DpOffset(0.dp, 1.dp)))
+                .solidEdge(31.dp)
                 .tap(label = "记一笔", onClick = onAdd),
             contentAlignment = Alignment.Center,
         ) { Glyph(LedgerIcons.get("plus", 2.2f), 26.dp, c.onAccent) }
