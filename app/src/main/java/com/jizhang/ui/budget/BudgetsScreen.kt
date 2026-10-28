@@ -64,6 +64,7 @@ import com.jizhang.ui.components.Segmented
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.rise
 import com.jizhang.ui.components.tap
+import com.jizhang.ui.forms.BudgetDetailForm
 import com.jizhang.ui.forms.BudgetForm
 import com.jizhang.ui.forms.TotalBudgetForm
 import com.jizhang.ui.theme.LedgerColors
@@ -96,7 +97,7 @@ fun BudgetBar(progress: BudgetProgress, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun LevelBar(fraction: Float, level: BudgetLevel, modifier: Modifier = Modifier, height: Dp = 6.dp) {
+fun LevelBar(fraction: Float, level: BudgetLevel, modifier: Modifier = Modifier, height: Dp = 6.dp) {
     val c = LedgerTheme.colors
     val w by animateFloatAsState(fraction.coerceIn(0f, 1f), Motion.layout(), label = "budgetBar")
     val fill by animateColorAsState(c.levelColor(level), Motion.fade(), label = "budgetLevel")
@@ -192,14 +193,24 @@ fun BudgetScreen(
     }
 
     fun editBudget(existing: Budget?) = form.open { s ->
-        BudgetForm(
-            existing = existing,
+        BudgetForm(            existing = existing,
             categories = expenseCategories,
             chips = { vm.valueChips(LedgerViewModel.budgetChipScope(it)) },
             onAddChip = { p, text -> vm.addValueChip(LedgerViewModel.budgetChipScope(p), text) },
             onRemoveChip = { p, chip -> vm.removeValueChip(LedgerViewModel.budgetChipScope(p), chip) },
             onSave = { name, period, category, cents -> vm.saveBudget(existing?.id, name, period, category, cents) },
             onDelete = if (existing != null) ({ vm.deleteBudget(existing.id) }) else null,
+            close = s::close,
+        )
+    }
+
+    /** A budget opens on what it is made of (spent, bar, ranking); 编辑预算 there swaps in [editBudget]. */
+    fun openDetail(p: BudgetProgress) = form.open { s ->
+        BudgetDetailForm(
+            progress = p,
+            records = state.allRecords,
+            today = state.today,
+            onEdit = { editBudget(p.budget) },
             close = s::close,
         )
     }
@@ -262,7 +273,7 @@ fun BudgetScreen(
                     Modifier.padding(horizontal = 20.dp).rise(2 + (start + i).coerceAtMost(4)).animateItem(
                         fadeInSpec = Motion.fade(), placementSpec = Motion.offset, fadeOutSpec = Motion.fade(),
                     ),
-                ) { editBudget(p.budget) }
+                ) { openDetail(p) }
             }
         }
         item(key = "new") {

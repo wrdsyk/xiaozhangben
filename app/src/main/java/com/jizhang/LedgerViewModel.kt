@@ -545,6 +545,8 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setTheme(theme: ThemeId) = viewModelScope.launch { container.settings.setTheme(theme) }
 
+    fun setLiquidGlass(on: Boolean) = viewModelScope.launch { container.settings.setLiquidGlass(on) }
+
     fun setBudget(cents: Long) = setTotalBudget(BudgetPeriod.Month, cents)
 
     /** Sets the year / month / day total budget; 0 clears year or day. */

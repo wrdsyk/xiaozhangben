@@ -85,6 +85,7 @@ import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalEntrancePlayed
 import com.jizhang.ui.components.LocalHazeState
+import com.jizhang.ui.components.LocalLiquidGlass
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.detail.DetailScreen
@@ -164,7 +165,12 @@ fun LedgerApp(vm: LedgerViewModel) {
             bottom = nav.calculateBottomPadding() + 62.dp + 40.dp,
         )
 
-        CompositionLocalProvider(LocalHazeState provides haze, LocalEntrancePlayed provides entrancePlayed, LocalFormSheet provides form) {
+        CompositionLocalProvider(
+            LocalHazeState provides haze,
+            LocalEntrancePlayed provides entrancePlayed,
+            LocalFormSheet provides form,
+            LocalLiquidGlass provides state.settings.liquidGlass,
+        ) {
             Box(Modifier.fillMaxSize().themeReveal(reveal).background(c.bg0)) {
                 AmbientBackground(Modifier.fillMaxSize().hazeSource(haze))
 

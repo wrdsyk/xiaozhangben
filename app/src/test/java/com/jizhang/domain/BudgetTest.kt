@@ -35,8 +35,17 @@ class BudgetTest {
         assertEquals(-5000, p[2].leftCents)
     }
 
-    @Test fun generatedName() {
-        assertEquals("餐饮 · 每日", Budget(1, "", BudgetPeriod.Day, Category.Food, 1).displayName)
+    @Test fun detailListsExactlyTheExpensesTheBudgetCounts() {
+        // The detail sheet shows what the bar counts: same period, same category, expenses only.
+        val day = Budget(1, "", BudgetPeriod.Day, Category.Food, 8000)
+        assertEquals(listOf(3000L), day.expensesOf(records, today).map { it.amountCents })
+        val year = Budget(2, "", BudgetPeriod.Year, null, 900000)
+        assertEquals(listOf(3000L, 2000L, 500L, 10000L), year.expensesOf(records, today).map { it.amountCents })
+        val march = Budget(3, "", BudgetPeriod.Year, Category.Food, 10000)
+        assertEquals(15000L, march.expensesOf(records, today).sumOf { it.amountCents }) // 3000 + 2000 + 10000
+    }
+
+    @Test fun generatedName() {        assertEquals("餐饮 · 每日", Budget(1, "", BudgetPeriod.Day, Category.Food, 1).displayName)
         assertEquals("全部支出 · 每年", Budget(1, " ", BudgetPeriod.Year, null, 1).displayName)
         assertEquals("吃饭", Budget(1, "吃饭", BudgetPeriod.Day, Category.Food, 1).displayName)
     }

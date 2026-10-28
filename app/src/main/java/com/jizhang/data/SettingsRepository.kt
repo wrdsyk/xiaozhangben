@@ -32,6 +32,8 @@ data class Settings(
     /** Yearly / daily total budgets; 0 = not set. */
     val yearBudgetCents: Long = 0,
     val dayBudgetCents: Long = 0,
+    /** Glass surfaces use Haze's optics shader (liquid glass) instead of a plain blur. */
+    val liquidGlass: Boolean = true,
 ) {
     fun totalFor(period: BudgetPeriod): Long = when (period) {
         BudgetPeriod.Year -> yearBudgetCents
@@ -60,6 +62,7 @@ class SettingsRepository(private val context: Context) {
     private val budgetKey = longPreferencesKey("budget_cents")
     private val yearBudgetKey = longPreferencesKey("year_budget_cents")
     private val dayBudgetKey = longPreferencesKey("day_budget_cents")
+    private val liquidKey = booleanPreferencesKey("liquid_glass")
     private val seededKey = booleanPreferencesKey("demo_seeded")
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -68,10 +71,13 @@ class SettingsRepository(private val context: Context) {
             budgetCents = p[budgetKey] ?: Settings.DEFAULT_BUDGET_CENTS,
             yearBudgetCents = p[yearBudgetKey] ?: 0,
             dayBudgetCents = p[dayBudgetKey] ?: 0,
+            liquidGlass = p[liquidKey] ?: true,
         )
     }
 
     suspend fun setTheme(theme: ThemeId) = context.dataStore.edit { it[themeKey] = theme.key }
+
+    suspend fun setLiquidGlass(on: Boolean) = context.dataStore.edit { it[liquidKey] = on }
 
     suspend fun setBudget(cents: Long) = context.dataStore.edit { it[budgetKey] = cents }
 

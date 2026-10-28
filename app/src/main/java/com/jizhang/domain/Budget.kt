@@ -33,6 +33,12 @@ data class Budget(
 
     /** The user's name, or "餐饮 · 每日" when they left it blank. */
     val displayName: String get() = name.ifBlank { "$scopeLabel · ${period.label}" }
+
+    /** Every expense this budget is about: its period, and its category when it has one. */
+    fun expensesOf(records: List<Record>, today: LocalDate): List<Record> = records.filter {
+        it.kind == EntryKind.Expense && period.contains(it.date, today) &&
+            (category == null || it.category.key == category.key)
+    }
 }
 
 /** Progress colour band for bars and the ring: up to 50% green, 50–80% yellow, 80% and over red. */
@@ -57,15 +63,8 @@ data class BudgetProgress(val budget: Budget, val spentCents: Long) {
 
     companion object {
         /** [records] must cover at least the current year for yearly budgets to be right. */
-        fun of(budgets: List<Budget>, records: List<Record>, today: LocalDate): List<BudgetProgress> {
-            val expenses = records.filter { it.kind == EntryKind.Expense }
-            return budgets.map { b ->
-                val spent = expenses
-                    .filter { b.period.contains(it.date, today) && (b.category == null || it.category.key == b.category.key) }
-                    .sumOf { it.amountCents }
-                BudgetProgress(b, spent)
-            }
-        }
+        fun of(budgets: List<Budget>, records: List<Record>, today: LocalDate): List<BudgetProgress> =
+            budgets.map { b -> BudgetProgress(b, b.expensesOf(records, today).sumOf { it.amountCents }) }
     }
 }
 
