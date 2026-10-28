@@ -62,6 +62,7 @@ Personal Android bookkeeping app, for the owner's own use only. It has no server
   - Build it from `FormSheet.kt` pieces: `FormTitle`, `FormField`, `Segmented`, `ChoiceChips`, `FormActions`.
   - Ready-made forms live in `ui/forms/Forms.kt`. Dates use `DateWheel`.
 - Full-screen overlays (add sheet, form host) are stacked in `LedgerApp`. A later `BackHandler` wins, so any handler under an open form checks `!LocalFormSheet.current.isOpen`. Handlers inside a form that need back first (e.g. note chips in edit mode) take `backClaims`.
+- Dragging down closes a form (`FormSheetHost`): a 48dp strip behind the form's first rows takes the finger wherever the form has nothing to touch, and a scrollable form hands its over-scroll to the sheet through `nestedScroll`. A scroller that must keep its over-scroll (the `DateWheel` wheels) consumes it itself, or pulling past the first row drags the sheet.
 
 ## Data
 - Room DB v5: `MIGRATION_1_2` adds `budgets`; `MIGRATION_2_3` adds `custom_categories` and `note_chips`; `MIGRATION_3_4` adds record `images`/`ruleId`, custom category `color`, `category_prefs` and `recurring`; `MIGRATION_4_5` adds `recurring.yearDays` and turns monthly `days` into a day-of-month bit set (bit d−1 = day d).
@@ -79,9 +80,11 @@ Personal Android bookkeeping app, for the owner's own use only. It has no server
 - Haze glass chooses its light/dark material from `LocalConfiguration.uiMode`. `LedgerTheme` overrides the night bit to follow the app theme, not the system theme.
 - `Modifier.dropShadow` draws under translucent content. Only use it where an opaque blur or fill covers it.
 - Touch targets must be at least 48dp.
+- No endless animation on or under a glass surface: it redraws and re-blurs the surface at every frame. Decoration runs from a coroutine that rests between runs (see `glint` in `Glass.kt`).
+- Haze renders blur and glass at reduced resolution on purpose (`BlurQuality` / `GlassQuality` in `Glass.kt`); raise them only if a blur looks blocky. Keep `hazeGlass` to a few big surfaces: each one keeps about ten offscreen layers, and 0.5.3 put it on every card and crashed on launch.
 - A pointer handler on a node that moves with the finger (a dragged tile) reads ~zero `positionChange()`. Work out the finger in a stationary space instead (see `GridDrag.laid` in `AddSheet`).
 
 ## Releases
 - Public repo `wrdsyk/xiaozhangben`; the in-app updater reads its latest GitHub Release (`jizhang.updateRepo` in `gradle.properties`).
-- Publish with `scripts/release.sh release-notes/<version>.md` after raising `versionCode`/`versionName` and committing. The GitHub CLI is at `G:	ools\gh\gh.exe` (`GH=/g/tools/gh/gh.exe`); run it outside the sandbox, where the login lives.
+- Publish with `scripts/release.sh release-notes/<version>.md` after raising `versionCode`/`versionName` and committing. The GitHub CLI is at `G:\tools\gh\gh.exe` (`GH=/g/tools/gh/gh.exe`); run it outside the sandbox, where the login lives.
 - Releases are signed with this machine's `~/.android/debug.keystore`. Losing it means the phone can't take updates without uninstalling (and losing data), so keep a copy of it.

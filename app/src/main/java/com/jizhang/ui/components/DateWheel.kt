@@ -33,8 +33,12 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,14 @@ import kotlin.math.abs
 private val ItemHeight = 48.dp
 private const val VISIBLE = 5
 private const val YEARS_BACK = 10
+
+/**
+ * Whatever a wheel cannot scroll stops here. With its first row centred and a finger still pulling
+ * down, the sheet the wheel sits in must not follow (drag-to-close takes the leftovers of lists).
+ */
+private val KeepOverscroll = object : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = available
+}
 
 private val weekday = mapOf(
     DayOfWeek.MONDAY to "周一", DayOfWeek.TUESDAY to "周二", DayOfWeek.WEDNESDAY to "周三",
@@ -265,7 +277,7 @@ private fun Wheel(
         state = state,
         flingBehavior = fling,
         contentPadding = PaddingValues(vertical = ItemHeight * (VISIBLE / 2)),
-        modifier = modifier.height(ItemHeight * VISIBLE),
+        modifier = modifier.nestedScroll(KeepOverscroll).height(ItemHeight * VISIBLE),
     ) {
         items(count) { i ->
             val on = enabled(i)

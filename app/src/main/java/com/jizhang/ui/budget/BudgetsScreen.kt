@@ -193,7 +193,8 @@ fun BudgetScreen(
     }
 
     fun editBudget(existing: Budget?) = form.open { s ->
-        BudgetForm(            existing = existing,
+        BudgetForm(
+            existing = existing,
             categories = expenseCategories,
             chips = { vm.valueChips(LedgerViewModel.budgetChipScope(it)) },
             onAddChip = { p, text -> vm.addValueChip(LedgerViewModel.budgetChipScope(p), text) },

@@ -1,16 +1,15 @@
 package com.jizhang.ui.components
 
 import android.os.Build
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,15 +29,28 @@ import com.jizhang.ui.theme.LedgerColors
 import com.jizhang.ui.theme.LedgerTheme
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.HazeInput
+import dev.chrisbanes.haze.HazePerformanceMode
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.blur.HazeBlurStyle
 import dev.chrisbanes.haze.blur.HazeColorEffect
 import dev.chrisbanes.haze.blur.hazeBlur
 import dev.chrisbanes.haze.glass.GlassStyle
 import dev.chrisbanes.haze.glass.hazeGlass
+import kotlinx.coroutines.delay
 
 /** The ambient background registers itself here; every glass surface blurs it. */
 val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
+
+private const val GlintSweepMs = 2_400
+private const val GlintRestMs = 5_600L
+
+/**
+ * How much of the backdrop Haze renders. A blur this wide leaves little detail to lose, so half the
+ * width and height (a quarter of the pixels) costs a quarter of the GPU work. The lens surfaces keep
+ * a little more, for the edge where the refraction shows. Raise these if a blur looks blocky.
+ */
+private val BlurQuality = HazePerformanceMode.Performance
+private val GlassQuality = HazePerformanceMode.Fixed(0.25f)
 
 /** CSS saturate(180%) brightness(1.06), the prototype's backdrop filter. */
 private val backdropFilter = ColorFilter.colorMatrix(
@@ -92,6 +104,7 @@ fun Modifier.glass(
                     shape(shape)
                     tint(Color.Transparent)
                 },
+                performanceMode = GlassQuality,
             )
             else -> m.hazeBlur(
                 input,
@@ -100,6 +113,7 @@ fun Modifier.glass(
                     noiseFactor(0.03f)
                     colorEffects(listOf(HazeColorEffect.colorFilter(backdropFilter)))
                 },
+                performanceMode = BlurQuality,
             )
         }
     }
@@ -117,19 +131,26 @@ fun Modifier.glass(
     return m.border(1.5.dp, c.rim(), shape)
 }
 
-/** A soft diagonal highlight that sweeps across every eight seconds. */
+/**
+ * A soft diagonal highlight that sweeps across every eight seconds: 2.4 s of sweep, 5.6 s of rest
+ * (the prototype's keyframes). Frames are asked for only while it crosses the card. An endless
+ * transition would redraw, and re-blur, this big glass card at every frame of the rest as well,
+ * which is most of the time and the one thing on the home screen that never stood still.
+ */
 @Composable
 private fun Modifier.glint(color: Color): Modifier {
-    val sweep = rememberInfiniteTransition("glint").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(8000, easing = LinearEasing), RepeatMode.Restart),
-        label = "glint",
-    )
+    val sweep = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(GlintRestMs)
+            sweep.animateTo(1f, tween(GlintSweepMs, easing = LinearEasing))
+            sweep.snapTo(0f)
+        }
+    }
     return drawWithContent {
         drawContent()
-        // Idle for the first 55% of the cycle, then cross from right to left (prototype keyframes).
-        val p = ((sweep.value - .55f) / .3f).coerceIn(0f, 1f)
+        // Right to left across the card; at rest (0) or done (1) there is nothing to draw.
+        val p = sweep.value
         if (p <= 0f || p >= 1f) return@drawWithContent
         val w = size.width
         val x = w * (1.4f - 1.8f * p)

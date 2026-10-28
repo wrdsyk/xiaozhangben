@@ -154,7 +154,7 @@ data class Trend(
     val averageCents: Long = if (buckets.isEmpty()) 0 else totalCents / buckets.size
     val averageLabel: String get() = granularity.averageLabel
 
-    /** Top five categories in the period, the rest merged into one "其他" slice. */
+    /** Top five categories in the period, the rest merged into one "其余 N 类" slice. */
     val shares: List<CategoryShare> = CategoryShare.topOf(expenses, totalCents)
 
     /** Only for a period that has not begun; the picker never offers one. */
@@ -165,7 +165,7 @@ data class Trend(
 
     /**
      * The period's single expenses behind one donut slice, largest first: the slice's category, or
-     * for the merged "其他" slice (no category) everything outside the categories [shares] names.
+     * for the merged "其余 N 类" slice (no category) everything outside the categories [shares] names.
      * Categories are matched by key, since a real "其他" may sit among the top five too.
      */
     fun expensesOf(share: CategoryShare): List<Record> {

@@ -3,6 +3,7 @@ package com.jizhang.ui.components
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,7 +11,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -43,9 +47,11 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -53,12 +59,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -68,24 +79,16 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
 import com.jizhang.ui.theme.numberStyle
 import com.jizhang.ui.theme.rememberHaptics
-import kotlin.math.abs
-import androidx.compose.animation.core.animate
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** What a form can do from inside its content. */
@@ -143,29 +146,41 @@ fun FormSheetHost(controller: FormSheetController) {
                 .then(if (req != null) Modifier.pointerInput(Unit) { detectTapGestures { controller.close() } } else Modifier),
         )
     }
-    // Drag down to put the sheet away: the grabber works on every form, and a scrollable form also
-    // hands its over-scroll to the sheet (so pulling down at the top of a long list moves it).
+    // Drag down to put the sheet away: the top of the sheet works on every form, and a scrollable
+    // form also hands its over-scroll to the sheet (so pulling down at the top of a long list moves it).
     var dragY by remember { mutableFloatStateOf(0f) }
     val dragScope = rememberCoroutineScope()
     val dismissAt = with(LocalDensity.current) { 88.dp.toPx() }
-    val settle: () -> Unit = {
-        dragScope.launch {
-            // Past the threshold the sheet closes from where the finger left it (the exit slide
-            // carries on from there); short of it, it springs back.
-            if (dragY > dismissAt) controller.close()
+    val flingAt = with(LocalDensity.current) { 600.dp.toPx() }
+    // The spring back after a short drag. A new touch cancels it, so the two never fight over dragY.
+    val springBack = remember { arrayOfNulls<Job>(1) }
+    val settle: (Float) -> Unit = { velocity ->
+        springBack[0]?.cancel()
+        springBack[0] = dragScope.launch {
+            // Pulled past the threshold or flung down, the sheet closes from where the finger left it
+            // (the exit slide carries on from there); short of that, it springs back.
+            if (dragY > dismissAt || (dragY > 0f && velocity > flingAt)) controller.close()
             else animate(dragY, 0f, animationSpec = Motion.layout()) { v, _ -> dragY = v }
         }
-        Unit
     }
+    val dragState = rememberDraggableState { delta -> dragY = (dragY + delta).coerceAtLeast(0f) }
     // A new form opens at rest; the closed one keeps its offset while its exit slide runs.
-    LaunchedEffect(req?.id) { if (req != null) dragY = 0f }
+    LaunchedEffect(req?.id) {
+        if (req != null) {
+            springBack[0]?.cancel()
+            dragY = 0f
+        }
+    }
     val sheetDrag = remember(dragScope, dismissAt) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                // Dragging back up first returns the sheet to its place.
-                if (source == NestedScrollSource.UserInput && available.y < 0f && dragY > 0f) {
-                    dragY = (dragY + available.y).coerceAtLeast(0f)
-                    return Offset(0f, available.y)
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                springBack[0]?.cancel()
+                // Dragging back up first returns the sheet to its place, and only that far.
+                if (available.y < 0f && dragY > 0f) {
+                    val back = maxOf(available.y, -dragY)
+                    dragY += back
+                    return Offset(0f, back)
                 }
                 return Offset.Zero
             }
@@ -180,7 +195,7 @@ fun FormSheetHost(controller: FormSheetController) {
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                if (dragY > 0f) settle()
+                if (dragY > 0f) settle(available.y)
                 return Velocity.Zero
             }
         }
@@ -195,7 +210,7 @@ fun FormSheetHost(controller: FormSheetController) {
         ) {
             val r = last ?: return@AnimatedVisibility
             val base = if (c.isDark) lerp(c.bg1, Color.Black, .25f) else lerp(c.bg0, Color.White, .5f)
-            Column(
+            Box(
                 Modifier
                     .fillMaxWidth()
                     .offset { IntOffset(0, dragY.roundToInt().coerceAtLeast(0)) }
@@ -204,30 +219,29 @@ fun FormSheetHost(controller: FormSheetController) {
                     .padding(horizontal = 10.dp, vertical = 10.dp)
                     .glass(32.dp, blur = 30.dp, fill = Brush.verticalGradient(listOf(base.copy(alpha = .9f), base.copy(alpha = .8f))))
                     // Taps inside the sheet must not fall through to the scrim.
-                    .pointerInput(Unit) { detectTapGestures { } }
-                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                    .pointerInput(Unit) { detectTapGestures { } },
             ) {
-                // The grabber is the handle: a tall strip, so it is easy to catch and drag.
+                // A 48dp drag strip behind the form's first rows: where the form has nothing to touch
+                // (the grabber, the title) a finger lands on it, and anything tappable still wins.
+                // Behind rather than in the flow, so the sheet is laid out exactly as it always was.
                 Box(
                     Modifier
+                        .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .height(40.dp)
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onDragEnd = settle,
-                                onDragCancel = settle,
-                                onVerticalDrag = { change, amount ->
-                                    dragY = (dragY + amount).coerceAtLeast(0f)
-                                    change.consume()
-                                },
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
+                        .height(48.dp)
+                        .draggable(
+                            dragState, Orientation.Vertical,
+                            onDragStarted = { springBack[0]?.cancel() },
+                            onDragStopped = { velocity -> settle(velocity) },
+                        ),
+                )
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    Box(Modifier.size(36.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.track))
+                    Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.track))
+                    key(r.id) { r.content(this, scope) }
                 }
-                key(r.id) { r.content(this, scope) }
             }
         }
     }

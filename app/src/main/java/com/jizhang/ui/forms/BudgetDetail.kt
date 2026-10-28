@@ -9,9 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,13 +27,13 @@ import com.jizhang.domain.BudgetProgress
 import com.jizhang.domain.Record
 import com.jizhang.domain.formatCents
 import com.jizhang.domain.formatCentsShort
-import com.jizhang.ui.chipDate
-import com.jizhang.ui.percentLabel
 import com.jizhang.ui.budget.LevelBar
 import com.jizhang.ui.budget.levelColor
+import com.jizhang.ui.chipDate
 import com.jizhang.ui.components.FormActions
 import com.jizhang.ui.components.FormLabel
 import com.jizhang.ui.components.FormTitle
+import com.jizhang.ui.percentLabel
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.numberStyle
 import java.time.LocalDate
@@ -58,7 +58,6 @@ fun BudgetDetailForm(
     val all = remember(progress, records) {
         b.expensesOf(records, today).sortedWith(compareByDescending<Record> { it.amountCents }.thenByDescending { it.occurredAt })
     }
-    val scroll = rememberScrollState()
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         FormTitle(b.displayName, "${b.period.label} ¥${formatCentsShort(b.amountCents)} · ${b.period.scope}已用")
@@ -97,14 +96,10 @@ fun BudgetDetailForm(
                 Box { Text("这段时间还没有支出", fontSize = 13.sp, color = c.sub) }
             } else {
                 // The whole list, in its own scroller: a long month must not push the buttons off
-                // screen, and the sheet itself stays short enough to reach the scrim.
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = RankingMaxHeight)
-                        .verticalScroll(scroll),
-                ) {
-                    all.forEachIndexed { i, r -> DetailRow(i + 1, r, today) }
+                // screen, and the sheet itself stays short enough to reach the scrim. Lazy, so a year
+                // of expenses costs the rows on screen and not every one of them.
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = RankingMaxHeight)) {
+                    itemsIndexed(all, key = { _, r -> r.id }) { i, r -> DetailRow(i + 1, r, today) }
                 }
             }
         }
