@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.CacheDrawScope
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -269,6 +270,7 @@ private const val RimBandMaxPx = 6f
 private const val LightX = .866f
 private const val LightY = .5f
 
+
 /**
  * Draws the backdrop through the lens, under this node's content, or returns null where it can't:
  * below Android 13, with no backdrop provided, or on a driver that rejects the shader. The lens
@@ -284,9 +286,111 @@ fun Modifier.liquidGlass(
     spec: Float = 1f,
 ): Modifier? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+    val shader = remember { runCatching { RuntimeShader(LensAgsl) }.getOrNull() } ?: return null
+    return backdropEffect(base, blur) { margin ->
+        val w = size.width
+        val h = size.height
+        val k = density / RefDensity
+        val blurPx = blur.toPx()
+        // Adaptive lens scale: the defaults are for big panels, so a small control would be
+        // all edge. Bevel, refraction and the glow band are capped by the short side.
+        val minDim = min(w, h)
+        val refDim = 110.dp.toPx()
+        val bevel = min(BevelPx * k, minDim * .3f).coerceAtLeast(2f)
+        val refract = min(RefractPx * k, .7f * minDim * min(1f, minDim / refDim))
+        val rimBand = min(RimBandMaxPx * k, minDim * .05f).coerceAtLeast(2f)
+        val r = min(corner.toPx(), minDim / 2)
+        shader.setFloatUniform("margin", margin.toFloat())
+        shader.setFloatUniform("viewSize", w, h)
+        shader.setFloatUniform("shape1", w / 2, h / 2, w / 2, h / 2)
+        shader.setFloatUniform("radii1", r, r, r, r)
+        shader.setFloatUniform("shape1L", w / 2, h / 2, w / 2, h / 2)
+        shader.setFloatUniform("rimSoft", 0f)
+        shader.setFloatUniform("shape2", 0f, 0f, 0f, 0f)
+        shader.setFloatUniform("radius2", 0f)
+        shader.setFloatUniform("blendK", 0f)
+        shader.setFloatUniform("bevel", bevel)
+        shader.setFloatUniform("refractPx", refract)
+        shader.setFloatUniform("falloff", Falloff)
+        shader.setFloatUniform("refractDir", -1f)
+        shader.setFloatUniform("sampleLo", margin + 1f, margin + 1f)
+        shader.setFloatUniform("sampleHi", margin + w - 1f, margin + h - 1f)
+        shader.setFloatUniform("dispersion", Dispersion)
+        shader.setFloatUniform("lightDir", LightX, LightY)
+        shader.setFloatUniform("specStrength", spec)
+        shader.setFloatUniform("rimBandMax", rimBand)
+        shader.setFloatUniform("tintColor", 1f, 1f, 1f, tint)
+        shader.setFloatUniform("adaptiveTint", 0f)
+        shader.setFloatUniform("glassTint", 0f, 0f, 0f, 0f)
+        shader.setFloatUniform("dimAmount", 0f)
+        shader.setFloatUniform("satFactor", Saturation)
+        shader.setFloatUniform("press", 0f)
+        shader.setFloatUniform("touchPos", 0f, 0f)
+        shader.setFloatUniform("touchAmp", 0f)
+        val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
+        if (blurPx > .01f) {
+            RenderEffect.createChainEffect(lens, RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP))
+        } else {
+            lens
+        }
+    }
+}
+
+/**
+ * The backdrop blurred and colour-graded like CSS `backdrop-filter: blur() saturate() brightness()
+ * contrast()`, under this node's content. It fills the node's bounds, so clip before it. Null where
+ * it can't run (below Android 13, or no backdrop provided).
+ */
+@Composable
+fun Modifier.backdropBlur(
+    base: Color,
+    blur: Dp,
+    saturation: Float = 1f,
+    brightness: Float = 1f,
+    contrast: Float = 1f,
+): Modifier? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+    val grade = remember(saturation, brightness, contrast) {
+        android.graphics.ColorMatrix().apply {
+            setSaturation(saturation)
+            postConcat(android.graphics.ColorMatrix().apply { setScale(brightness, brightness, brightness, 1f) })
+            val t = 128f * (1f - contrast)
+            postConcat(
+                android.graphics.ColorMatrix(
+                    floatArrayOf(
+                        contrast, 0f, 0f, 0f, t,
+                        0f, contrast, 0f, 0f, t,
+                        0f, 0f, contrast, 0f, t,
+                        0f, 0f, 0f, 1f, 0f,
+                    ),
+                ),
+            )
+        }
+    }
+    return backdropEffect(base, blur) {
+        val blurPx = blur.toPx()
+        val color = RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(grade))
+        if (blurPx > .01f) {
+            RenderEffect.createChainEffect(color, RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP))
+        } else {
+            color
+        }
+    }
+}
+
+/**
+ * The shared part: records the backdrop behind this node (plus the tab content for the nav bar)
+ * with a margin around it, runs [effect] over it, and draws the result under the node's content.
+ * The effect is rebuilt only when the size changes; scrolling only re-records.
+ */
+@Composable
+private fun Modifier.backdropEffect(
+    base: Color,
+    blur: Dp,
+    effect: CacheDrawScope.(margin: Int) -> RenderEffect,
+): Modifier? {
     val backdrop = LocalLiquidBackdrop.current ?: return null
     val overContent = LocalLiquidOverContent.current
-    val shader = remember { runCatching { RuntimeShader(LensAgsl) }.getOrNull() } ?: return null
     val layer = rememberGraphicsLayer()
     // The reference's "layerNode": an effect's input is only guaranteed inside its output clip, which
     // on screen is cut to the window, so near the screen's edge the blur read transparent black.
@@ -296,62 +400,16 @@ fun Modifier.liquidGlass(
     return this
         .onGloballyPositioned { pos.value = it.positionInWindow() }
         .drawWithCache {
-            val w = size.width
-            val h = size.height
-            val k = density / RefDensity
-            val blurPx = blur.toPx()
             // Room around the pane for the blur to read real backdrop instead of clamped edge.
-            val margin = (max(blurPx * 3f, 32f).toInt() + 15) / 16 * 16
-            // Adaptive lens scale: the defaults are for big panels, so a small control would be
-            // all edge. Bevel, refraction and the glow band are capped by the short side.
-            val minDim = min(w, h)
-            val refDim = 110.dp.toPx()
-            val bevel = min(BevelPx * k, minDim * .3f).coerceAtLeast(2f)
-            val refract = min(RefractPx * k, .7f * minDim * min(1f, minDim / refDim))
-            val rimBand = min(RimBandMaxPx * k, minDim * .05f).coerceAtLeast(2f)
-            val r = min(corner.toPx(), minDim / 2)
-            val effect = runCatching {
-                shader.setFloatUniform("margin", margin.toFloat())
-                shader.setFloatUniform("viewSize", w, h)
-                shader.setFloatUniform("shape1", w / 2, h / 2, w / 2, h / 2)
-                shader.setFloatUniform("radii1", r, r, r, r)
-                shader.setFloatUniform("shape1L", w / 2, h / 2, w / 2, h / 2)
-                shader.setFloatUniform("rimSoft", 0f)
-                shader.setFloatUniform("shape2", 0f, 0f, 0f, 0f)
-                shader.setFloatUniform("radius2", 0f)
-                shader.setFloatUniform("blendK", 0f)
-                shader.setFloatUniform("bevel", bevel)
-                shader.setFloatUniform("refractPx", refract)
-                shader.setFloatUniform("falloff", Falloff)
-                shader.setFloatUniform("refractDir", -1f)
-                shader.setFloatUniform("sampleLo", margin + 1f, margin + 1f)
-                shader.setFloatUniform("sampleHi", margin + w - 1f, margin + h - 1f)
-                shader.setFloatUniform("dispersion", Dispersion)
-                shader.setFloatUniform("lightDir", LightX, LightY)
-                shader.setFloatUniform("specStrength", spec)
-                shader.setFloatUniform("rimBandMax", rimBand)
-                shader.setFloatUniform("tintColor", 1f, 1f, 1f, tint)
-                shader.setFloatUniform("adaptiveTint", 0f)
-                shader.setFloatUniform("glassTint", 0f, 0f, 0f, 0f)
-                shader.setFloatUniform("dimAmount", 0f)
-                shader.setFloatUniform("satFactor", Saturation)
-                shader.setFloatUniform("press", 0f)
-                shader.setFloatUniform("touchPos", 0f, 0f)
-                shader.setFloatUniform("touchAmp", 0f)
-                val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
-                if (blurPx > .01f) {
-                    RenderEffect.createChainEffect(lens, RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP))
-                } else {
-                    lens
-                }
-            }.getOrNull()
-            layer.renderEffect = effect?.asComposeRenderEffect()
-            val recW = ceil(w).toInt() + 2 * margin
-            val recH = ceil(h).toInt() + 2 * margin
+            val margin = (max(blur.toPx() * 3f, 32f).toInt() + 15) / 16 * 16
+            val built = runCatching { effect(margin) }.getOrNull()
+            layer.renderEffect = built?.asComposeRenderEffect()
+            val recW = ceil(size.width).toInt() + 2 * margin
+            val recH = ceil(size.height).toInt() + 2 * margin
             onDrawBehind {
                 val src = backdrop.layer
                 val at = pos.value
-                if (effect == null || src == null || at == Offset.Unspecified) return@onDrawBehind
+                if (built == null || src == null || at == Offset.Unspecified) return@onDrawBehind
                 val content = if (overContent) backdrop.content else null
                 val bg = backdrop.origin
                 val co = backdrop.contentOrigin

@@ -27,19 +27,24 @@ enum class ThemeId(val key: String, val label: String) {
 
 /** How glass surfaces are finished. Keys are stored, so never rename one. */
 enum class GlassFinish(val key: String, val label: String) {
-    /** Thin glass with a lit rim and Haze's lens shader on the big surfaces. */
-    Crystal("crystal", "晶透"),
+    /** Set A of the design canvas: thin glass, a bevel lit at two corners, a faint pink/blue fringe. */
+    Crystal("clear", "晶透"),
+    /**
+     * QWEA0/Liquid-Glass-Android's lens (LiquidGlass.kt). Shipped as 晶透 in 0.5.8, so it keeps
+     * that finish's key and owners who picked it stay on it.
+     */
+    Liquid("crystal", "液态"),
     /** Frosted: a wider blur that also takes in the list scrolling behind the nav bar and sheets. */
     Frost("frost", "雾透");
 
     companion object {
-        fun of(key: String?): GlassFinish = entries.firstOrNull { it.key == key } ?: Crystal
+        fun of(key: String?): GlassFinish = entries.firstOrNull { it.key == key } ?: Liquid
     }
 }
 
 data class Settings(
     val theme: ThemeId = ThemeId.Pearl,
-    val glass: GlassFinish = GlassFinish.Crystal,
+    val glass: GlassFinish = GlassFinish.Liquid,
     /** Monthly total budget; drives the home ring. */
     val budgetCents: Long = DEFAULT_BUDGET_CENTS,
     /** Yearly / daily total budgets; 0 = not set. */

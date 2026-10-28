@@ -142,7 +142,7 @@ fun MeScreen(
                     options = GlassFinish.entries.map { it.label },
                     selected = state.settings.glass.ordinal,
                     onSelect = { vm.setGlass(GlassFinish.entries[it]) },
-                    modifier = Modifier.width(168.dp),
+                    modifier = Modifier.width(216.dp),
                 )
             }
         }

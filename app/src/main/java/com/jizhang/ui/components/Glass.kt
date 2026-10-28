@@ -56,7 +56,7 @@ import kotlin.math.min
 val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
 
 /** The owner's pick in 我的; [glass], [chip] and [liftedPill] read it. */
-val LocalGlassFinish = staticCompositionLocalOf { GlassFinish.Crystal }
+val LocalGlassFinish = staticCompositionLocalOf { GlassFinish.Liquid }
 
 private const val GlintSweepMs = 2_400
 private const val GlintRestMs = 5_600L
@@ -114,7 +114,11 @@ fun Modifier.glass(
     /** false for surfaces that already sit on a blurred sheet, e.g. keypad keys. */
     backdrop: Boolean = true,
 ): Modifier {
-    if (LocalGlassFinish.current == GlassFinish.Frost) return frost(corner, shadow, fill, blur, backdrop)
+    when (LocalGlassFinish.current) {
+        GlassFinish.Frost -> return frost(corner, shadow, fill, blur, backdrop)
+        GlassFinish.Crystal -> return crystalGlass(corner, shadow, fill, glint, backdrop)
+        GlassFinish.Liquid -> Unit
+    }
     val c = LedgerTheme.colors
     val haze = LocalHazeState.current
     val t = Tune.of(LocalContext.current)
@@ -397,7 +401,7 @@ private fun Modifier.sheen(color: Color, height: Dp, diagonal: Boolean, reach: F
  * which is most of the time and the one thing on the home screen that never stood still.
  */
 @Composable
-private fun Modifier.glint(color: Color): Modifier {
+internal fun Modifier.glint(color: Color): Modifier {
     val sweep = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -428,7 +432,7 @@ private fun Modifier.glint(color: Color): Modifier {
  */
 @Composable
 fun Modifier.solidEdge(corner: Dp): Modifier =
-    lensRim(corner, Color.White.copy(alpha = .55f), back = .6f, glowAlpha = .3f) ?: rim(
+    if (LocalGlassFinish.current == GlassFinish.Crystal) crystalSolid(corner) else lensRim(corner, Color.White.copy(alpha = .55f), back = .6f, glowAlpha = .3f) ?: rim(
         corner, .8.dp,
         lit = Color.White.copy(alpha = .5f), dark = Color.Transparent, bright = Color.White.copy(alpha = .2f),
         fadeLit = .34f, hair = Color.Transparent, hairW = 0.dp,
@@ -442,6 +446,7 @@ fun Modifier.solidEdge(corner: Dp): Modifier =
 fun Modifier.liftedPill(corner: Dp, base: Color): Modifier {
     val c = LedgerTheme.colors
     val shape = RoundedCornerShape(corner)
+    if (LocalGlassFinish.current == GlassFinish.Crystal) return crystalRaised(corner, base)
     if (LocalGlassFinish.current == GlassFinish.Frost) {
         val d = c.darkness
         return this
@@ -466,6 +471,7 @@ fun Modifier.chip(corner: Dp, strong: Boolean = false): Modifier {
     val t = Tune.of(LocalContext.current)
     val d = c.darkness
     val base = if (strong) c.chipStrong else c.chip
+    if (LocalGlassFinish.current == GlassFinish.Crystal) return crystalChip(corner, strong)
     if (LocalGlassFinish.current == GlassFinish.Frost) {
         // A small pane of the same frosted glass: clear, an even light edge, a glow running in.
         return this
