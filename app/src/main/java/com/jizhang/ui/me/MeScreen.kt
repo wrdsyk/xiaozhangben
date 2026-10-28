@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -59,7 +58,6 @@ import com.jizhang.domain.Hue
 import com.jizhang.domain.formatCentsShort
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
-import com.jizhang.ui.components.PillSwitch
 import com.jizhang.ui.forms.BackupForm
 import com.jizhang.ui.forms.ConfirmForm
 import com.jizhang.ui.forms.InfoForm
@@ -141,12 +139,6 @@ fun MeScreen(
         Column(Modifier.fillMaxWidth().rise(2).glass(26.dp).padding(horizontal = 16.dp, vertical = 2.dp)) {
             SettingRow("repeat", Hue.Transit, "定时记账", if (runningRules > 0) "$runningRules 条进行中" else "自动记重复的账", onOpenRecurring)
             HorizontalDivider(thickness = 0.5.dp, color = c.hair)
-            SettingSwitchRow(
-                icon = "image", hue = Hue.Study, title = "液态玻璃",
-                detail = if (state.settings.liquidGlass) "镜面高光 · 边缘色散" else "已关闭，用省电的模糊",
-                checked = state.settings.liquidGlass,
-            ) { on -> vm.setLiquidGlass(on) }
-            HorizontalDivider(thickness = 0.5.dp, color = c.hair)
             SettingRow("backup", Hue.Med, "备份与恢复", "导出 · 导入") {
                 form.open { s ->
                     BackupForm(
@@ -194,40 +186,6 @@ fun MeScreen(
             fontSize = 12.sp, color = c.sub, textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().rise(3),
         )
-    }
-}
-
-@Composable
-private fun SettingSwitchRow(
-    icon: String,
-    hue: Hue,
-    title: String,
-    detail: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit,
-) {
-    val c = LedgerTheme.colors
-    val haptics = rememberHaptics()
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .tap(label = title, pressedScale = .98f) {
-                haptics.tick()
-                onChange(!checked)
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(c.tint(hue)),
-            contentAlignment = Alignment.Center,
-        ) { Glyph(LedgerIcons.get(icon), 18.dp, c.hue(hue)) }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink)
-            Text(detail, fontSize = 11.sp, color = c.sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        PillSwitch(checked, title)
     }
 }
 

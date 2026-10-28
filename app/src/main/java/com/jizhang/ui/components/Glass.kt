@@ -12,7 +12,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -35,20 +34,11 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.blur.HazeBlurStyle
 import dev.chrisbanes.haze.blur.HazeColorEffect
 import dev.chrisbanes.haze.blur.hazeBlur
-import dev.chrisbanes.haze.glass.ChromaticAberrationMode
 import dev.chrisbanes.haze.glass.GlassStyle
-import dev.chrisbanes.haze.glass.SurfaceProfile
 import dev.chrisbanes.haze.glass.hazeGlass
 
 /** The ambient background registers itself here; every glass surface blurs it. */
 val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
-
-/**
- * 液态玻璃: draw every surface with Haze's optics shader (specular rim, chromatic edges, ambient
- * response) instead of a plain blur. One flag, one code path; it costs more GPU, so 我的 can turn
- * it off and everything falls back to the cheaper blur.
- */
-val LocalLiquidGlass = staticCompositionLocalOf { true }
 
 /** CSS saturate(180%) brightness(1.06), the prototype's backdrop filter. */
 private val backdropFilter = ColorFilter.colorMatrix(
@@ -93,13 +83,10 @@ fun Modifier.glass(
             .dropShadow(shape, Shadow(radius = 8.dp, color = c.shadowSoft, spread = (-4).dp, offset = DpOffset(0.dp, 3.dp)))
     }
     m = m.clip(shape)
-    val liquid = LocalLiquidGlass.current
-    val canShade = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     if (haze != null && backdrop) {
         val input = HazeInput.Backdrop(haze)
         m = when {
-            liquid && canShade -> m.hazeGlass(input, liquidStyle(shape))
-            refract && canShade -> m.hazeGlass(
+            refract && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> m.hazeGlass(
                 input,
                 GlassStyle {
                     shape(shape)
@@ -128,26 +115,6 @@ fun Modifier.glass(
         .innerShadow(shape, Shadow(radius = 20.dp, color = Color.White.copy(alpha = .14f - .1f * c.darkness)))
     if (glint) m = m.glint(c.glint)
     return m.border(1.5.dp, c.rim(), shape)
-}
-
-/**
- * The 液态 profile: Haze's optics shader turned up — a bright specular rim, a little chromatic
- * split at the edges, ambient light picked up from the backdrop, and a soft shaded edge so the
- * pane reads as a solid piece rather than a tinted blur.
- */
-private fun liquidStyle(shape: RoundedCornerShape): GlassStyle = GlassStyle {
-    shape(shape)
-    tint(Color.Transparent)
-    specularIntensity(1.35f)
-    specularExponent(42f)
-    fresnelExponent(3f)
-    chromaticAberrationStrength(.45f)
-    chromaticAberrationMode(ChromaticAberrationMode.Simple)
-    ambientResponse(.9f)
-    edgeSoftness(1.dp)
-    edgeShadow(Color.Black.copy(alpha = .14f))
-    surfaceProfile(SurfaceProfile.Squircle)
-    lightPosition(Alignment.TopStart)
 }
 
 /** A soft diagonal highlight that sweeps across every eight seconds. */
