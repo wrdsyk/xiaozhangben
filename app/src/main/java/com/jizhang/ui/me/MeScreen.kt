@@ -69,7 +69,6 @@ import com.jizhang.ui.update.UpdateRows
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
-import com.jizhang.ui.theme.rememberHaptics
 import com.jizhang.ui.theme.colorsFor
 import kotlinx.coroutines.launch
 import java.time.LocalDate
