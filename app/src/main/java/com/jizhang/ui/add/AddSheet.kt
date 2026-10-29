@@ -202,7 +202,10 @@ fun AddSheet(
                     shape = circle(reveal.value)
                 }
                 .then(if (haze != null) Modifier.hazeBlur(HazeInput.Backdrop(haze), HazeBlurStyle { blurRadius(26.dp) }) else Modifier)
-                .background(c.sheet),
+                .background(c.sheet)
+                // Content on a layer of its own: its animations (rolling digits, wiggling tiles)
+                // must not re-run the full-screen blur.
+                .graphicsLayer(),
         ) {
             key(current.id) {
                 SheetContent(current.editing, today, catalog, vm, onClose, onSave)

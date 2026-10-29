@@ -16,12 +16,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.jizhang.ui.theme.LedgerTheme
+import kotlin.math.ceil
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.HazeInput
 import dev.chrisbanes.haze.HazePerformanceMode
@@ -183,23 +185,35 @@ internal fun Modifier.crystalSolid(corner: Dp): Modifier {
 /**
  * A drop shadow drawn only outside the shape, as CSS draws box-shadow. Compose's dropShadow fills
  * under the shape as well, which shows through a translucent chip as a grey smudge.
+ *
+ * The blur runs once per size into a bitmap: a mask filter on the path itself is worked out on
+ * the CPU and uploaded again at every draw, which made every frame of a sliding pill slow.
  */
 private fun Modifier.outerShadow(corner: Dp, blur: Dp, spread: Dp, y: Dp, color: Color): Modifier = drawWithCache {
     val r = corner.toPx()
     val own = Path().apply { addRoundRect(RoundRect(0f, 0f, size.width, size.height, CornerRadius(r))) }
     val s = spread.toPx()
     val dy = y.toPx()
-    val cast = Path().apply {
-        addRoundRect(RoundRect(-s, -s + dy, size.width + s, size.height + s + dy, CornerRadius((r + s).coerceAtLeast(0f))))
-    }
-    val paint = Paint().apply {
-        this.color = color
-        asFrameworkPaint().maskFilter = BlurMaskFilter(blur.toPx() / 2f, BlurMaskFilter.Blur.NORMAL)
-    }
+    val radius = blur.toPx() / 2f
+    // The blur reaches about 1.7 radii past the shape.
+    val pad = ceil(radius * 2f).toInt() + 2
+    val castW = size.width + 2 * s
+    val castH = size.height + 2 * s
+    val w = ceil(castW).toInt() + 2 * pad
+    val h = ceil(castH).toInt() + 2 * pad
+    if (castW <= 0f || castH <= 0f || radius <= 0f) return@drawWithCache onDrawBehind { }
+    val shadow = ImageBitmap(w, h)
+    Canvas(shadow).drawRoundRect(
+        pad.toFloat(), pad.toFloat(), pad + castW, pad + castH,
+        (r + s).coerceAtLeast(0f), (r + s).coerceAtLeast(0f),
+        Paint().apply {
+            this.color = color
+            asFrameworkPaint().maskFilter = BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL)
+        },
+    )
+    val at = Offset(-s - pad, -s + dy - pad)
     onDrawBehind {
-        clipPath(own, ClipOp.Difference) {
-            drawIntoCanvas { it.drawPath(cast, paint) }
-        }
+        clipPath(own, ClipOp.Difference) { drawImage(shadow, topLeft = at) }
     }
 }
 

@@ -101,8 +101,11 @@ private fun LedgerColors.rim() = Brush.linearGradient(
  * Liquid-glass surface: blurred backdrop, a faint gradient fill, an inner highlight and a
  * gradient rim. [refract] uses Haze's glass shader (Android 13+) for the hero card, nav bar
  * and add button; other surfaces use a plain blur, which is cheaper when many are on screen.
+ *
+ * What sits on the glass gets a layer of its own. Without it, any animation inside (a sliding
+ * switch, a list expanding in a form, rolling digits) re-records the surface too, and the blurred
+ * backdrop is worked out again on every frame of it.
  */
-@OptIn(ExperimentalHazeApi::class)
 @Composable
 fun Modifier.glass(
     corner: Dp,
@@ -113,6 +116,18 @@ fun Modifier.glass(
     blur: Dp = 14.dp,
     /** false for surfaces that already sit on a blurred sheet, e.g. keypad keys. */
     backdrop: Boolean = true,
+): Modifier = glassSurface(corner, refract, shadow, fill, glint, blur, backdrop).graphicsLayer()
+
+@OptIn(ExperimentalHazeApi::class)
+@Composable
+private fun Modifier.glassSurface(
+    corner: Dp,
+    refract: Boolean,
+    shadow: Boolean,
+    fill: Brush?,
+    glint: Boolean,
+    blur: Dp,
+    backdrop: Boolean,
 ): Modifier {
     when (LocalGlassFinish.current) {
         GlassFinish.Frost -> return frost(corner, shadow, fill, blur, backdrop)

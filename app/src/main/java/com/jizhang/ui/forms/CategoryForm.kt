@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalFocusManager
@@ -313,13 +314,19 @@ private fun ColumnScope.DeleteStep(
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // The choice first, so it shows without scrolling; the bills follow and lead on to the rest.
             FormLabel(if (usage.rules > 0) "这些账单和定时记账" else "这些账单")
-            Segmented(listOf("移到别的分类", "一起删除"), if (dropBills) 1 else 0, { onDropBills(it == 1) })
-            AnimatedVisibility(
-                visible = !dropBills,
-                enter = expandVertically(Motion.size) + fadeIn(Motion.fade()),
-                exit = shrinkVertically(Motion.size) + fadeOut(Motion.fade()),
-            ) {
-                TargetGrid(targets, target.key, onPick)
+            Segmented(listOf("移动到", "全部删除"), if (dropBills) 1 else 0, { onDropBills(it == 1) })
+            // The categories and the delete notice share one place and cross-fade, so switching
+            // never changes the sheet's height: resizing it re-blurs the glass on every frame.
+            val drop by animateFloatAsState(if (dropBills) 1f else 0f, Motion.fade(), label = "dropBills")
+            Box {
+                TargetGrid(targets, target.key, enabled = !dropBills, modifier = Modifier.graphicsLayer { alpha = 1f - drop }, onSelect = onPick)
+                DropNotice(
+                    usage,
+                    Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = drop }
+                        .then(if (dropBills) Modifier else Modifier.clearAndSetSemantics { }),
+                )
             }
             if (records.isNotEmpty() && bills != null) {
                 Spacer(Modifier.height(4.dp))
@@ -391,19 +398,47 @@ private fun deleteSummary(usage: CategoryUsage, target: Category?): String {
     }.joinToString("")
 }
 
+/** In place of the categories when the bills go with the category: what goes, and that it's final. */
+@Composable
+private fun DropNotice(usage: CategoryUsage, modifier: Modifier) {
+    val c = LedgerTheme.colors
+    val danger = c.hue(Hue.Gift)
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp)).background(c.tint(Hue.Gift)).padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+    ) {
+        Glyph(LedgerIcons.get("trash"), 26.dp, danger)
+        Text(
+            buildList {
+                if (usage.records > 0) add("${usage.records} 笔账单")
+                if (usage.rules > 0) add("${usage.rules} 条定时记账")
+            }.joinToString("和") + "会和分类一起删除",
+            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = danger,
+        )
+        Text("删除后不能撤销", fontSize = 12.sp, color = c.sub)
+    }
+}
+
 /** The categories a deleted one can move to, as wrapping chips with their colour dot; one is selected. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TargetGrid(targets: List<Category>, selected: String, onSelect: (Category) -> Unit) {
+internal fun TargetGrid(
+    targets: List<Category>,
+    selected: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onSelect: (Category) -> Unit,
+) {
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
-    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         targets.forEach { cat ->
             val on = cat.key == selected
             val bg by animateFloatAsState(if (on) 1f else 0f, Motion.fade(), label = "targetChip")
             // 48dp to tap, drawn as a slimmer pill.
             Box(
-                Modifier.height(48.dp).tap(label = cat.label) {
+                Modifier.height(48.dp).tap(label = cat.label, enabled = enabled) {
                     if (!on) {
                         haptics.tick()
                         onSelect(cat)

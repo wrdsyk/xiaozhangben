@@ -26,10 +26,11 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -367,7 +368,7 @@ fun Modifier.backdropBlur(
             )
         }
     }
-    return backdropEffect(base, blur) {
+    return backdropEffect(base, blur, roams = true) {
         val blurPx = blur.toPx()
         val color = RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(grade))
         if (blurPx > .01f) {
@@ -381,12 +382,22 @@ fun Modifier.backdropBlur(
 /**
  * The shared part: records the backdrop behind this node (plus the tab content for the nav bar)
  * with a margin around it, runs [effect] over it, and draws the result under the node's content.
- * The effect is rebuilt only when the size changes; scrolling only re-records.
+ *
+ * The recording only points at the backdrop's layers, so when they redraw (a list scrolling under
+ * the nav bar) the effect follows without a new recording. A new recording makes the effect run
+ * again over the whole area, so it is made only when what the effect reads has changed:
+ * - [roams] (a plain blur, which looks the same wherever it is): the recording covers a region
+ *   [RoamSlack] larger than the node on every side, in window pixels, and is drawn shifted to
+ *   wherever the node is now. A card scrolling, or a sheet growing as a form expands, re-records
+ *   only once it leaves that region, instead of on every frame.
+ * - otherwise (the lens, whose shader is laid out on the node): it is re-recorded whenever the node
+ *   moves or resizes, exactly around it.
  */
 @Composable
 private fun Modifier.backdropEffect(
     base: Color,
     blur: Dp,
+    roams: Boolean = false,
     effect: CacheDrawScope.(margin: Int) -> RenderEffect,
 ): Modifier? {
     val backdrop = LocalLiquidBackdrop.current ?: return null
@@ -397,15 +408,23 @@ private fun Modifier.backdropEffect(
     // Drawn inside a compositing layer the size of the whole recording, the clip is that layer.
     val frame = rememberGraphicsLayer().apply { compositingStrategy = CompositingStrategy.Offscreen }
     val pos = remember { mutableStateOf(Offset.Unspecified) }
+    // Outlives the draw cache, which a resize throws away: a roaming recording survives resizes.
+    val rec = remember { Recording() }
     return this
         .onGloballyPositioned { pos.value = it.positionInWindow() }
         .drawWithCache {
             // Room around the pane for the blur to read real backdrop instead of clamped edge.
             val margin = (max(blur.toPx() * 3f, 32f).toInt() + 15) / 16 * 16
-            val built = runCatching { effect(margin) }.getOrNull()
-            layer.renderEffect = built?.asComposeRenderEffect()
-            val recW = ceil(size.width).toInt() + 2 * margin
-            val recH = ceil(size.height).toInt() + 2 * margin
+            // A roaming effect doesn't depend on the node's size, so it is built once per margin; a
+            // new effect object would make the old output unusable even if it were the same.
+            if (!roams || rec.margin != margin || rec.effect == null) {
+                rec.effect = runCatching { effect(margin) }.getOrNull()
+                rec.margin = margin
+                rec.region = null
+                layer.renderEffect = rec.effect?.asComposeRenderEffect()
+            }
+            val built = rec.effect
+            val slack = if (roams) RoamSlack.roundToPx() else 0
             onDrawBehind {
                 val src = backdrop.layer
                 val at = pos.value
@@ -413,14 +432,40 @@ private fun Modifier.backdropEffect(
                 val content = if (overContent) backdrop.content else null
                 val bg = backdrop.origin
                 val co = backdrop.contentOrigin
-                layer.record(IntSize(recW, recH)) {
-                    drawRect(base)
-                    translate(margin - (at.x - bg.x), margin - (at.y - bg.y)) { drawLayer(src) }
-                    if (content != null) translate(margin - (at.x - co.x), margin - (at.y - co.y)) { drawLayer(content) }
+                // What the effect has to see: the node plus its margin, in window pixels.
+                val need = IntRect(
+                    floor(at.x).toInt() - margin, floor(at.y).toInt() - margin,
+                    ceil(at.x + size.width).toInt() + margin, ceil(at.y + size.height).toInt() + margin,
+                )
+                val key = if (roams) listOf(src, content, bg, co, base) else listOf(src, content, bg, co, base, at, size)
+                val had = rec.region
+                if (had == null || key != rec.made || !had.covers(need)) {
+                    val r = IntRect(need.left - slack, need.top - slack, need.right + slack, need.bottom + slack)
+                    layer.record(r.size) {
+                        drawRect(base)
+                        translate(bg.x - r.left, bg.y - r.top) { drawLayer(src) }
+                        if (content != null) translate(co.x - r.left, co.y - r.top) { drawLayer(content) }
+                    }
+                    frame.record(r.size) { drawLayer(layer) }
+                    rec.region = r
+                    rec.made = key
                 }
-                frame.record(IntSize(recW, recH)) { drawLayer(layer) }
-                frame.topLeft = IntOffset(-margin, -margin)
-                drawLayer(frame)
+                val r = rec.region ?: return@onDrawBehind
+                translate(r.left - at.x, r.top - at.y) { drawLayer(frame) }
             }
         }
 }
+
+/** How far past a roaming backdrop's node its recording reaches; see [backdropEffect]. */
+private val RoamSlack = 64.dp
+
+/** The last recording of a [backdropEffect]: its region in window pixels and what it was made from. */
+private class Recording {
+    var region: IntRect? = null
+    var made: List<Any?>? = null
+    var margin = -1
+    var effect: RenderEffect? = null
+}
+
+private fun IntRect.covers(other: IntRect) =
+    other.left >= left && other.top >= top && other.right <= right && other.bottom <= bottom

@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInRoot
@@ -102,7 +103,9 @@ fun SharedTransitionScope.DetailScreen(
                 clipInOverlayDuringTransition = OverlayClip(RoundedCornerShape(16.dp)),
             )
             .then(if (haze != null) Modifier.hazeBlur(HazeInput.Backdrop(haze), HazeBlurStyle { blurRadius(26.dp) }) else Modifier)
-            .background(c.sheet),
+            .background(c.sheet)
+            // Content on a layer of its own, so its animations don't re-run the full-screen blur.
+            .graphicsLayer(),
     ) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),

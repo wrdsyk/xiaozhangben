@@ -123,6 +123,8 @@ private fun RecurringPage(rules: List<RecurringRule>, state: LedgerState, vm: Le
             .fillMaxSize()
             .then(if (haze != null) Modifier.hazeBlur(HazeInput.Backdrop(haze), HazeBlurStyle { blurRadius(26.dp) }) else Modifier)
             .background(c.sheet)
+            // Content on a layer of its own, so its animations don't re-run the full-screen blur.
+            .graphicsLayer()
             // Taps on empty space must not reach the tab underneath.
             .pointerInput(Unit) { detectTapGestures { } },
     ) {
