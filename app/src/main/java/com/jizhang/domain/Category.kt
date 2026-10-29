@@ -64,7 +64,10 @@ data class Category(
     }
 }
 
-/** The user's changes to a category: a new name / icon / colour (built-ins only) and its grid position. */
+/**
+ * The user's changes to a category: a new name / icon / colour and whether it is hidden (built-ins
+ * only), and its grid position.
+ */
 data class CategoryPref(
     val key: String,
     val name: String? = null,
@@ -72,6 +75,7 @@ data class CategoryPref(
     val hue: Hue? = null,
     val color: Int? = null,
     val sortOrder: Int? = null,
+    val hidden: Boolean = false,
 ) {
     /** A built-in with this pref's edits applied. */
     fun applyTo(c: Category): Category = c.copy(
@@ -84,7 +88,8 @@ data class CategoryPref(
 
 /**
  * Built-in plus user-made categories; the single place that turns a stored key into a [Category].
- * [prefs] rename / recolour built-ins and hold the grid order the user dragged into place.
+ * [prefs] rename / recolour / hide built-ins and hold the grid order the user dragged into place.
+ * A hidden built-in still resolves through [of] (its bills keep it); it only leaves [forKind].
  */
 data class CategoryCatalog(
     val customs: List<Category> = emptyList(),
@@ -105,12 +110,28 @@ data class CategoryCatalog(
      * in by the ViewModel); any still without one keep the default order after the saved ones.
      */
     fun forKind(kind: EntryKind): List<Category> {
-        val mine = builtins.filter { it.kind == kind }
+        val mine = builtins.filter { it.kind == kind && !isHidden(it) }
         val default = mine.filterNot { it.isOther } + customs.filter { it.kind == kind } + mine.filter { it.isOther }
         return default.withIndex()
             .sortedBy { (i, cat) -> prefs[cat.key]?.sortOrder ?: (DEFAULT_RANK + i) }
             .map { it.value }
     }
+
+    /** [forKind] plus [current] when it is hidden, so editing something filed under it keeps it. */
+    fun forKind(kind: EntryKind, current: Category?): List<Category> {
+        val list = forKind(kind)
+        if (current == null || current.kind != kind || list.any { it.key == current.key }) return list
+        return byKey[current.key]?.let { list + it } ?: list
+    }
+
+    /** Built-ins of [kind] the user hid, in their original order. */
+    fun hiddenOf(kind: EntryKind): List<Category> = builtins.filter { it.kind == kind && isHidden(it) }
+
+    /** Every name in use for [kind], hidden built-ins included (restoring one mustn't clash). */
+    fun labelsOf(kind: EntryKind): List<Category> = builtins.filter { it.kind == kind } + customs.filter { it.kind == kind }
+
+    /** "其他" is the fallback for deleted categories, so it can never be hidden. */
+    private fun isHidden(c: Category) = !c.isOther && prefs[c.key]?.hidden == true
 
     companion object {
         private const val DEFAULT_RANK = 100_000

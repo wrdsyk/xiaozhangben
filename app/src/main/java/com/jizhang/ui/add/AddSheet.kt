@@ -1,6 +1,13 @@
 package com.jizhang.ui.add
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.runtime.collectAsState
+import com.jizhang.ui.forms.CategoryBills
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -226,38 +233,59 @@ private fun SheetContent(
     val form = LocalFormSheet.current
     val shake = remember { Animatable(0f) }
     val options = catalog.forKind(kind)
-    // An edited custom category comes back as a new instance; a deleted one falls back to the first.
+    // An edited custom category comes back as a new instance; a deleted or hidden one falls back to
+    // the first, except the hidden category of the bill being edited, which it keeps.
     LaunchedEffect(options) {
-        category = options.firstOrNull { it.key == category.key } ?: options.first()
+        category = options.firstOrNull { it.key == category.key }
+            ?: catalog.hiddenOf(kind).firstOrNull { it.key == category.key && it.key == editing?.category?.key }
+            ?: options.first()
     }
 
     /** Long-press on the grid: tiles wiggle, can be dragged, and a tap edits them. */
     var arranging by remember { mutableStateOf(false) }
+    /** A custom category whose bills fill the page over the sheet (its delete step's "查看全部"). */
+    var billsOf by remember { mutableStateOf<Category?>(null) }
     // Declared after AddSheet's own handler, so back ends edit mode before it closes the sheet.
-    BackHandler(enabled = arranging && !form.isOpen) { arranging = false }
+    BackHandler(enabled = arranging && !form.isOpen && billsOf == null) { arranging = false }
 
-    fun editCategory(existing: Category?) {
+    fun editCategory(existing: Category?, startDeleting: Boolean = false) {
         val k = existing?.kind ?: kind
-        // Built-ins can't be deleted; once edited they can go back to how they shipped.
+        // Built-ins can't be deleted, only hidden; once edited they can go back to how they shipped.
         val original = existing?.takeIf { !it.custom }?.let { Category.of(it.key) }
-        // A custom one asks where its bills go; counted now, while the sheet opens.
-        val usage = existing?.takeIf { it.custom }?.let(vm::categoryUsage) ?: CategoryUsage()
+        val custom = existing?.takeIf { it.custom }
         form.open { s ->
+            // Live, so the delete step's bills and counts follow bills edited, moved or deleted there.
+            val now by vm.state.collectAsState()
+            val cat = now.catalog
             CategoryForm(
                 existing = existing,
                 kind = k,
-                taken = catalog.forKind(k).filter { it.key != existing?.key }.map { it.label }.toSet(),
+                taken = cat.labelsOf(k).filter { it.key != existing?.key }.map { it.label }.toSet(),
                 onSave = { name, icon, hue, color -> vm.saveCategory(existing, name, k, icon, hue, color) },
-                onDelete = existing?.takeIf { it.custom }?.let { cat ->
-                    { target: Category ->
-                        vm.deleteCategory(cat, target)
+                onDelete = custom?.let { gone ->
+                    { target: Category? ->
+                        vm.deleteCategory(gone, target)
                         // If the deleted one was picked, stay with the category its bills move to.
-                        if (category.key == cat.key) category = target
+                        if (category.key == gone.key) category = target ?: cat.otherOf(k)
                     }
                 },
-                moveTargets = catalog.forKind(k).filter { it.key != existing?.key },
-                usage = usage,
-                onReset = existing?.takeIf { original != null && it != original }?.let { cat -> { vm.resetCategory(cat) } },
+                moveTargets = cat.forKind(k).filter { it.key != existing?.key },
+                usage = remember(now) { custom?.let(vm::categoryUsage) ?: CategoryUsage() },
+                bills = custom?.let { mine ->
+                    CategoryBills(
+                        records = remember(now.allRecords) { now.allRecords.filter { it.category.key == mine.key } },
+                        today = today,
+                        save = { r, to, cents, note, day -> vm.save(r.id, to, cents, note, day.atTime(r.occurredAt.toLocalTime()), r.images) },
+                        delete = vm::delete,
+                        viewAll = {
+                            s.close()
+                            billsOf = mine
+                        },
+                    )
+                },
+                startDeleting = startDeleting,
+                onHide = existing?.takeIf { !it.custom && !it.isOther }?.let { hide -> { vm.hideCategory(hide) } },
+                onReset = existing?.takeIf { original != null && it != original }?.let { reset -> { vm.resetCategory(reset) } },
                 close = s::close,
             )
         }
@@ -283,6 +311,7 @@ private fun SheetContent(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -312,6 +341,7 @@ private fun SheetContent(
             key(kind) {
                 CategoryGrid(
                     categories = options,
+                    hidden = catalog.hiddenOf(kind),
                     selected = category,
                     editing = arranging,
                     onStartEditing = { arranging = true },
@@ -322,11 +352,22 @@ private fun SheetContent(
                     onEdit = { editCategory(it) },
                     onReorder = vm::reorderCategories,
                     onAdd = { editCategory(null) },
+                    onRestore = {
+                        haptics.tick()
+                        vm.restoreCategory(it)
+                    },
                     modifier = Modifier.weight(1f, fill = false),
                 )
             }
         }
 
+        // Editing categories needs the room: the bill card and keypad slide down out of the way.
+        AnimatedVisibility(
+            visible = !arranging,
+            enter = slideInVertically(Motion.offset) { it } + expandVertically(Motion.size, expandFrom = Alignment.Top) + fadeIn(Motion.fade()),
+            exit = slideOutVertically(Motion.offset) { it } + shrinkVertically(Motion.size, shrinkTowards = Alignment.Top) + fadeOut(Motion.fade()),
+        ) {
+        Column {
         Column(
             Modifier
                 .padding(start = 16.dp, end = 16.dp, bottom = 14.dp)
@@ -399,8 +440,17 @@ private fun SheetContent(
             onDone = { haptics.tick(); submit(again = false) },
             editing = editing != null,
         )
+        }
+        }
     }
 
+    CategoryBillsPage(billsOf, vm, today) {
+        val shown = billsOf
+        billsOf = null
+        // Back to the delete step it came from, with the category as it is now.
+        shown?.let { gone -> catalog.forKind(gone.kind).firstOrNull { it.key == gone.key }?.let { editCategory(it, startDeleting = true) } }
+    }
+    }
 }
 
 /** 支出 / 收入 toggle; the white droplet stretches as it slides, like the prototype's dropR/dropL. */
@@ -504,6 +554,8 @@ private class GridDrag(keys: List<String>) {
 @Composable
 private fun CategoryGrid(
     categories: List<Category>,
+    /** Hidden built-ins, shown under the grid in edit mode with a "+" to bring them back. */
+    hidden: List<Category>,
     selected: Category,
     editing: Boolean,
     onStartEditing: () -> Unit,
@@ -512,12 +564,15 @@ private fun CategoryGrid(
     /** Every key of this kind, in the new order. */
     onReorder: (List<String>) -> Unit,
     onAdd: () -> Unit,
+    onRestore: (Category) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
     val density = LocalDensity.current
     val scroll = rememberScrollState()
+    // Edit mode has the whole sheet (the keypad has gone); otherwise about three and a half rows.
+    val cap by animateDpAsState(if (editing) 900.dp else 330.dp, Motion.layout(), label = "gridCap")
     val keys = categories.map { it.key }
     val grid = remember { GridDrag(keys) }
     // Follows the catalog (a new, edited or deleted category, or a saved drop) unless mid-drag.
@@ -606,7 +661,7 @@ private fun CategoryGrid(
         }
         Box(
             Modifier
-                .heightIn(max = 330.dp)
+                .heightIn(max = cap)
                 .onSizeChanged { viewport = it.height }
                 .verticalScroll(scroll)
                 .padding(start = 12.dp, end = 12.dp, top = GridPadTop, bottom = 8.dp),
@@ -620,6 +675,7 @@ private fun CategoryGrid(
                 }
                 val width = with(density) { cellW.toDp() }
                 val rows = (order.size + GRID_COLUMNS) / GRID_COLUMNS
+                Column {
                 Box(Modifier.fillMaxWidth().height(CellHeight * rows + GridGap * (rows - 1))) {
                     categories.forEachIndexed { first, cat ->
                         key(cat.key) {
@@ -701,9 +757,67 @@ private fun CategoryGrid(
                             .tap(label = "添加分类", onClick = onAdd),
                     )
                 }
+                AnimatedVisibility(
+                    visible = editing && hidden.isNotEmpty(),
+                    enter = expandVertically(Motion.size, expandFrom = Alignment.Top) + fadeIn(Motion.fade()),
+                    exit = shrinkVertically(Motion.size, shrinkTowards = Alignment.Top) + fadeOut(Motion.fade()),
+                ) {
+                    HiddenRows(hidden, width, onRestore)
+                }
+                }
             }
         }
     }
+}
+
+/** "已隐藏" divider, then the hidden built-ins five to a row, dimmed, each with a "+" to restore. */
+@Composable
+private fun HiddenRows(hidden: List<Category>, width: Dp, onRestore: (Category) -> Unit) {
+    val c = LedgerTheme.colors
+    Column(Modifier.padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(GridGap)) {
+        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).height(1.dp).background(c.hair))
+            Text("已隐藏 · 点按恢复", fontSize = 11.sp, color = c.sub, modifier = Modifier.padding(horizontal = 10.dp))
+            Box(Modifier.weight(1f).height(1.dp).background(c.hair))
+        }
+        hidden.chunked(GRID_COLUMNS).forEach { row ->
+            Row {
+                row.forEach { cat ->
+                    key(cat.key) {
+                        Column(
+                            Modifier.size(width, CellHeight).tap(label = "恢复${cat.label}") { onRestore(cat) },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box {
+                                CategoryTile(
+                                    cat, 54.dp, 19.dp, iconSize = 25.dp,
+                                    background = c.tint(cat), glyph = c.hue(cat),
+                                    modifier = Modifier.graphicsLayer { alpha = .45f },
+                                )
+                                RestoreBadge(Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp))
+                            }
+                            Text(cat.label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = c.sub, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The "+" on a hidden tile; the whole tile is its touch target. */
+@Composable
+private fun RestoreBadge(modifier: Modifier) {
+    val c = LedgerTheme.colors
+    Box(
+        modifier
+            .size(20.dp)
+            .clip(CircleShape)
+            .background(c.accent)
+            .border(1.5.dp, c.bg0, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(LedgerIcons.get("plus", 2.6f), 11.dp, c.onAccent) }
 }
 
 /** One category cell: springs to its [slot], or follows the finger while it is the dragged one. */

@@ -8,6 +8,7 @@ import com.jizhang.data.MIGRATION_1_2
 import com.jizhang.data.MIGRATION_2_3
 import com.jizhang.data.MIGRATION_3_4
 import com.jizhang.data.MIGRATION_4_5
+import com.jizhang.data.MIGRATION_5_6
 import com.jizhang.data.ImageStore
 import com.jizhang.data.SettingsRepository
 import com.jizhang.data.UpdateController
@@ -25,7 +26,7 @@ class JizhangApp : Application() {
 /** Hand-rolled dependency container; the app is small enough not to need a DI framework. */
 class AppContainer(context: Context) {
     val database: AppDatabase = Room.databaseBuilder(context, AppDatabase::class.java, "jizhang.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
         .build()
     val settings = SettingsRepository(context)
     val images = ImageStore(context)

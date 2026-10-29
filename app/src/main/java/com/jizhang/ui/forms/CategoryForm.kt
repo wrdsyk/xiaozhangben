@@ -1,6 +1,5 @@
 package com.jizhang.ui.forms
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -31,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +52,7 @@ import com.jizhang.CategoryUsage
 import com.jizhang.domain.Category
 import com.jizhang.domain.EntryKind
 import com.jizhang.domain.Hue
+import com.jizhang.domain.Record
 import com.jizhang.ui.components.ButtonKind
 import com.jizhang.ui.components.CategoryTile
 import com.jizhang.ui.components.ColorPicker
@@ -63,25 +62,42 @@ import com.jizhang.ui.components.FormField
 import com.jizhang.ui.components.FormLabel
 import com.jizhang.ui.components.FormTitle
 import com.jizhang.ui.components.Glyph
-import com.jizhang.ui.components.LocalFormSheet
+import com.jizhang.ui.components.Segmented
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.theme.IconLibrary
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
 import com.jizhang.ui.theme.rememberHaptics
+import java.time.LocalDate
 
 private const val NAME_MAX = 6
 private const val ICON_COLUMNS = 6
 private const val SWATCH_COLUMNS = 6
 
+/** How many of a category's bills the delete step lists before "查看全部". */
+private const val RECENT = 10
+
+/**
+ * A custom category's bills for the delete step, newest first, and what can be done with them:
+ * edit or delete one in place, or open the full list ([viewAll], which closes this sheet).
+ */
+class CategoryBills(
+    val records: List<Record>,
+    val today: LocalDate,
+    val save: (record: Record, category: Category, cents: Long, note: String, date: LocalDate) -> Unit,
+    val delete: (Record) -> Unit,
+    val viewAll: () -> Unit,
+)
+
 /**
  * Create a custom bill category or edit any category: name (up to 6 characters), colour and
  * icon, with a live tile preview. The last colour swatch is the user's own colour (palette +
- * RGB). Custom categories can be deleted: "删除" turns the sheet into a second step that asks
- * which other category their bills and recurring rules move to ("其他" preselected) and says
- * what else goes; an edited built-in offers "恢复默认" instead. The icon picker takes whatever
- * height the sheet has left (at most ~300dp) and scrolls.
+ * RGB). Custom categories can be deleted: "删除" turns the sheet into a second step that lists
+ * their latest bills (each opens for editing, more behind "查看全部") and asks whether the bills
+ * and recurring rules move to another category ("其他" preselected) or go with it. Built-ins
+ * can't be deleted but can be hidden; an edited one also offers "恢复默认". The icon picker takes
+ * whatever height the sheet has left (at most ~300dp) and scrolls.
  */
 @Composable
 fun ColumnScope.CategoryForm(
@@ -91,12 +107,18 @@ fun ColumnScope.CategoryForm(
     taken: Set<String> = emptySet(),
     /** [color] is the user's own ARGB colour, or null for the theme [hue]. */
     onSave: (name: String, icon: String, hue: Hue, color: Int?) -> Unit,
-    /** Custom categories only; gets the category the bills and rules move to. */
-    onDelete: ((target: Category) -> Unit)?,
+    /** Custom categories only; gets the category the bills and rules move to, or null to delete them too. */
+    onDelete: ((target: Category?) -> Unit)?,
     /** The other categories of this kind a deleted one can move to, in grid order ("其他" among them). */
     moveTargets: List<Category> = emptyList(),
     /** What the deleted category takes with it, for the confirmation text. */
     usage: CategoryUsage = CategoryUsage(),
+    /** The deleted category's bills, listed on the delete step. */
+    bills: CategoryBills? = null,
+    /** Opens straight on the delete step (coming back from the full bill list). */
+    startDeleting: Boolean = false,
+    /** Built-ins other than "其他": take it out of the grid (it comes back from the grid's edit mode). */
+    onHide: (() -> Unit)? = null,
     /** Built-ins that differ from their original: back to the original name, icon and colour. */
     onReset: (() -> Unit)? = null,
     close: () -> Unit,
@@ -113,15 +135,41 @@ fun ColumnScope.CategoryForm(
     /** Last custom colour, so leaving for a theme hue and coming back keeps it. */
     var lastCustom by remember { mutableStateOf(existing?.color) }
     var picking by remember { mutableStateOf(false) }
-    /** Delete step: pick where the bills go, then confirm. */
-    var deleting by remember { mutableStateOf(false) }
+    /** Delete step: look over the bills, pick where they go, then confirm. */
+    var deleting by remember { mutableStateOf(startDeleting) }
+    /** Delete step choices, kept here so opening a bill and coming back doesn't reset them. */
+    var dropBills by remember { mutableStateOf(false) }
+    var target by remember { mutableStateOf<String?>(null) }
+    /** The bill opened from the delete step's list. */
+    var opened by remember { mutableStateOf<Long?>(null) }
     if (deleting && onDelete != null && existing != null) {
+        val targets = moveTargets.filter { it.key != existing.key }.ifEmpty { listOf(Category.otherOf(kind)) }
+        // Gone from the list once moved or deleted, which also ends its edit step.
+        val record = opened?.let { id -> bills?.records?.firstOrNull { it.id == id } }
+        if (record != null && bills != null) {
+            ClaimBack { opened = null }
+            RecordForm(
+                record = record,
+                categories = listOf(existing) + targets,
+                today = bills.today,
+                onSave = { cat, cents, note, date -> bills.save(record, cat, cents, note, date) },
+                onDelete = { bills.delete(record) },
+                close = { opened = null },
+            )
+            return
+        }
         DeleteStep(
             category = existing,
-            targets = moveTargets.filter { it.key != existing.key }.ifEmpty { listOf(Category.otherOf(kind)) },
+            targets = targets,
             usage = usage,
-            onConfirm = { target ->
-                onDelete(target)
+            bills = bills,
+            dropBills = dropBills,
+            onDropBills = { dropBills = it },
+            pick = target,
+            onPick = { target = it.key },
+            onOpen = { opened = it.id },
+            onConfirm = { dest ->
+                onDelete(dest)
                 close()
             },
             back = { deleting = false },
@@ -140,8 +188,9 @@ fun ColumnScope.CategoryForm(
             duplicate -> "已经有叫「$trimmed」的分类了，换个名字吧"
             trimmed.length > NAME_MAX -> "名字最多 $NAME_MAX 个字"
             existing == null -> "名字最多 $NAME_MAX 个字，再挑个颜色和图标"
-            existing.custom -> "删除时，可以选它的账单移到哪一类"
+            existing.custom -> "删除时，可以先看看它的账单，再决定移走还是一起删"
             onReset != null -> "改过的内置分类，随时可以恢复默认"
+            onHide != null -> "内置分类不能删除，用不上可以隐藏，账单还在"
             else -> "内置分类也能改名字、颜色和图标"
         },
     )
@@ -206,10 +255,18 @@ fun ColumnScope.CategoryForm(
             FormButton("取消", ButtonKind.Secondary, Modifier.weight(1f), onClick = close)
             FormButton("保存", ButtonKind.Primary, Modifier.weight(1.3f), enabled = valid, onClick = save)
         }
-        onReset != null -> Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FormButton("恢复默认", ButtonKind.Secondary, Modifier.weight(1.2f)) {
-                onReset()
-                close()
+        onReset != null || onHide != null -> Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (onHide != null) {
+                FormButton("隐藏", ButtonKind.Danger, Modifier.weight(1f)) {
+                    onHide()
+                    close()
+                }
+            }
+            if (onReset != null) {
+                FormButton("恢复默认", ButtonKind.Secondary, Modifier.weight(1.3f)) {
+                    onReset()
+                    close()
+                }
             }
             FormButton("取消", ButtonKind.Secondary, Modifier.weight(1f), onClick = close)
             FormButton("保存", ButtonKind.Primary, Modifier.weight(1.3f), enabled = valid, onClick = save)
@@ -219,46 +276,88 @@ fun ColumnScope.CategoryForm(
 }
 
 /**
- * Second step of deleting a custom category: where its bills and recurring rules go. [targets]
- * are the other categories of its kind; "其他" starts selected. Says how many bills and rules
- * move and that budgets limited to this category are removed. Back returns to the edit step.
+ * Second step of deleting a custom category. Lists its latest [RECENT] bills (tap one to edit it
+ * here; "查看全部" opens every bill), then asks whether its bills and recurring rules move to one
+ * of [targets] ("其他" preselected) or are deleted with it. Says what that does, and that budgets
+ * limited to this category go. Back returns to the edit step.
  */
 @Composable
 private fun ColumnScope.DeleteStep(
     category: Category,
     targets: List<Category>,
     usage: CategoryUsage,
-    onConfirm: (Category) -> Unit,
+    bills: CategoryBills?,
+    dropBills: Boolean,
+    onDropBills: (Boolean) -> Unit,
+    pick: String?,
+    onPick: (Category) -> Unit,
+    onOpen: (Record) -> Unit,
+    onConfirm: (Category?) -> Unit,
     back: () -> Unit,
 ) {
     val c = LedgerTheme.colors
-    // Back steps out of the confirmation, not out of the whole sheet.
-    val form = LocalFormSheet.current
-    DisposableEffect(form) {
-        form.backClaims++
-        onDispose { form.backClaims-- }
-    }
-    BackHandler(onBack = back)
+    ClaimBack(back)
 
     val fallback = targets.firstOrNull { it.isOther } ?: targets.first()
-    var pick by remember { mutableStateOf(fallback.key) }
     val target = targets.firstOrNull { it.key == pick } ?: fallback
-    val moving = usage.records > 0 || usage.rules > 0
+    val records = bills?.records.orEmpty()
+    val hasAny = usage.records > 0 || usage.rules > 0
+    val dropping = dropBills && hasAny
 
     FormTitle(
         "删除「${category.label}」",
-        if (moving) "它的账单和定时记账要移到哪一类？" else "这个分类下还没有账单和定时记账",
+        if (hasAny) "先看看它的账单，再决定它们的去处" else "这个分类下还没有账单和定时记账",
     )
-    if (moving) {
-        // Scrolls when a long list of categories outgrows the sheet, instead of pushing the buttons off it.
+    if (hasAny) {
+        // Scrolls when the bills and the categories outgrow the sheet, instead of pushing the buttons off it.
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            FormLabel("移到")
-            TargetGrid(targets, pick) { pick = it.key }
+            // The choice first, so it shows without scrolling; the bills follow and lead on to the rest.
+            FormLabel(if (usage.rules > 0) "这些账单和定时记账" else "这些账单")
+            Segmented(listOf("移到别的分类", "一起删除"), if (dropBills) 1 else 0, { onDropBills(it == 1) })
+            AnimatedVisibility(
+                visible = !dropBills,
+                enter = expandVertically(Motion.size) + fadeIn(Motion.fade()),
+                exit = shrinkVertically(Motion.size) + fadeOut(Motion.fade()),
+            ) {
+                TargetGrid(targets, target.key, onPick)
+            }
+            if (records.isNotEmpty() && bills != null) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FormLabel(if (records.size > RECENT) "最近 $RECENT 笔 · 共 ${records.size} 笔" else "共 ${records.size} 笔")
+                    Spacer(Modifier.weight(1f))
+                    Row(
+                        Modifier.height(48.dp).tap(label = "查看全部账单", onClick = bills.viewAll).padding(start = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("查看全部", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = c.accent)
+                        Glyph(LedgerIcons.get("chevr"), 13.dp, c.accent)
+                    }
+                }
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.opKey).padding(horizontal = 10.dp)) {
+                    records.take(RECENT).forEachIndexed { i, r ->
+                        if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.hair))
+                        RecordLine(r, bills.today, Modifier.tap(label = "编辑 ${r.title}", pressedScale = .98f) { onOpen(r) })
+                    }
+                    // The end of the short list leads on to the rest.
+                    if (records.size > RECENT) {
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(c.hair))
+                        Row(
+                            Modifier.fillMaxWidth().height(52.dp).tap(label = "查看全部账单", pressedScale = .98f, onClick = bills.viewAll),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Text("还有 ${records.size - RECENT} 笔，查看全部", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.accent)
+                            Glyph(LedgerIcons.get("chevr"), 14.dp, c.accent)
+                        }
+                    }
+                }
+            }
         }
     }
     Text(
-        deleteSummary(usage, target),
-        fontSize = 13.sp, color = c.sub, lineHeight = 19.sp,
+        deleteSummary(usage, target.takeUnless { dropping }),
+        fontSize = 13.sp, color = if (dropping) c.hue(Hue.Gift) else c.sub, lineHeight = 19.sp,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
@@ -266,22 +365,27 @@ private fun ColumnScope.DeleteStep(
             .padding(14.dp),
     )
     FormActions(
-        primary = "确认删除",
+        primary = if (dropping) "连同账单删除" else "确认删除",
         primaryKind = ButtonKind.Danger,
-        onPrimary = { onConfirm(target) },
+        onPrimary = { onConfirm(target.takeUnless { dropping }) },
         secondary = "返回",
         onSecondary = back,
     )
 }
 
-/** "N 笔账单和 M 条定时记账将移到「X」" plus what happens to budgets; each part only when there is something. */
-private fun deleteSummary(usage: CategoryUsage, target: Category): String {
+/**
+ * "N 笔账单和 M 条定时记账将移到「X」" (or, with no [target], "…会一起删除"), plus what happens
+ * to budgets; each part only when there is something.
+ */
+private fun deleteSummary(usage: CategoryUsage, target: Category?): String {
     val moved = buildList {
         if (usage.records > 0) add("${usage.records} 笔账单")
         if (usage.rules > 0) add("${usage.rules} 条定时记账")
     }
     return buildList {
-        if (moved.isNotEmpty()) add(moved.joinToString("和") + "将移到「${target.label}」。")
+        if (moved.isNotEmpty()) {
+            add(moved.joinToString("和") + if (target != null) "将移到「${target.label}」。" else "会一起删除，不能撤销。")
+        }
         if (usage.budgets > 0) add("限定在这个分类的 ${usage.budgets} 个预算会一并删除。")
         if (isEmpty()) add("删除后不会影响已有的账。")
     }.joinToString("")
@@ -290,7 +394,7 @@ private fun deleteSummary(usage: CategoryUsage, target: Category): String {
 /** The categories a deleted one can move to, as wrapping chips with their colour dot; one is selected. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TargetGrid(targets: List<Category>, selected: String, onSelect: (Category) -> Unit) {
+internal fun TargetGrid(targets: List<Category>, selected: String, onSelect: (Category) -> Unit) {
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

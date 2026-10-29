@@ -83,8 +83,8 @@ data class LedgerState(
 /** How many bills, recurring rules and category budgets depend on one category (see [LedgerViewModel.categoryUsage]). */
 data class CategoryUsage(val records: Int = 0, val rules: Int = 0, val budgets: Int = 0)
 
-/** A one-line message shown at the top; [undo] restores a deleted record. */
-data class ToastMessage(val id: Long, val text: String, val undo: RecordEntity? = null)
+/** A one-line message shown at the top; [undo] restores deleted records (empty: no undo button). */
+data class ToastMessage(val id: Long, val text: String, val undo: List<RecordEntity> = emptyList())
 
 class LedgerViewModel(private val container: AppContainer) : ViewModel() {
     private val db = container.database
@@ -226,14 +226,34 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
                 images = ImageStore.join(record.images),
                 ruleId = record.ruleId,
             )
-            showToast("已删除 · ${record.title}", undo = entity)
+            showToast("已删除 · ${record.title}", undo = listOf(entity))
         }
     }
 
     fun undo(message: ToastMessage) {
-        val row = message.undo ?: return
+        val rows = message.undo.ifEmpty { return }
         dismissToast(message.id)
-        viewModelScope.launch { dao.insert(row) }
+        viewModelScope.launch { dao.insertAll(rows) }
+    }
+
+    /** Moves hand-picked records (the category page's selection) into [target]. */
+    fun moveRecords(ids: Collection<Long>, target: Category) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            db.withTransaction { ids.chunked(SQL_BATCH).forEach { dao.reassignIds(it, target.key) } }
+            showToast("已把 ${ids.size} 笔移到「${target.label}」")
+        }
+    }
+
+    /** Deletes hand-picked records; the toast's undo brings all of them back. */
+    fun deleteRecords(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val rows = db.withTransaction {
+                ids.chunked(SQL_BATCH).flatMap { chunk -> dao.byIds(chunk).also { dao.deleteIds(chunk) } }
+            }
+            showToast("已删除 ${rows.size} 笔", undo = rows)
+        }
     }
 
     fun clearJustAdded() { _justAdded.value = null }
@@ -332,7 +352,7 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
         val label = name.trim().take(6)
         if (label.isEmpty()) return
         val k = existing?.kind ?: kind
-        if (state.value.catalog.forKind(k).any { it.label == label && it.key != existing?.key }) {
+        if (state.value.catalog.labelsOf(k).any { it.label == label && it.key != existing?.key }) {
             showToast("已有同名分类「$label」")
             return
         }
@@ -365,6 +385,7 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
                             hue = hue.name.takeIf { hue != base.hue || color != null },
                             color = color,
                             sortOrder = old?.sortOrder,
+                            hidden = old?.hidden ?: false,
                         ),
                     )
                     showToast("分类已保存")
@@ -378,8 +399,36 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
         if (category.custom) return
         viewModelScope.launch {
             val old = prefDao.get(category.key) ?: return@launch
-            if (old.sortOrder == null) prefDao.delete(category.key) else prefDao.upsert(CategoryPrefEntity(old.key, sortOrder = old.sortOrder))
+            if (old.sortOrder == null && !old.hidden) {
+                prefDao.delete(category.key)
+            } else {
+                prefDao.upsert(CategoryPrefEntity(old.key, sortOrder = old.sortOrder, hidden = old.hidden))
+            }
             showToast("已恢复默认 · ${Category.of(category.key).label}")
+        }
+    }
+
+    /**
+     * Built-ins can't be deleted, only hidden: out of the grid and the pickers, while their bills,
+     * recurring rules and budgets stay as they are. "其他" never hides (deleted categories fall back to it).
+     */
+    fun hideCategory(category: Category) {
+        if (category.custom || category.isOther) return
+        viewModelScope.launch {
+            prefDao.upsert((prefDao.get(category.key) ?: CategoryPrefEntity(category.key)).copy(hidden = true))
+            showToast("已隐藏 · ${category.label}")
+        }
+    }
+
+    /** Brings a hidden built-in back, just before "其他" when the grid has a dragged order. */
+    fun restoreCategory(category: Category) {
+        viewModelScope.launch {
+            db.withTransaction {
+                val old = prefDao.get(category.key) ?: return@withTransaction
+                prefDao.upsert(old.copy(hidden = false, sortOrder = null))
+                slotIntoOrder(category.kind, category.key)
+            }
+            showToast("已恢复 · ${category.label}")
         }
     }
 
@@ -412,26 +461,38 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
 
     /**
      * Deletes a custom category. Its records and recurring rules move to [target], another category
-     * of the same kind ("其他" if that one has gone meanwhile); the budgets limited to it and its
-     * note chips are removed, all in one transaction.
+     * of the same kind ("其他" if that one has gone meanwhile), or, with [target] null, are deleted
+     * with it. The budgets limited to it and its note chips are removed, all in one transaction.
      */
-    fun deleteCategory(category: Category, target: Category) {
+    fun deleteCategory(category: Category, target: Category?) {
         if (!category.custom) return
         val id = category.key.removePrefix("c").toLongOrNull() ?: return
         viewModelScope.launch {
             val cat = state.value.catalog
-            val dest = cat.forKind(category.kind).firstOrNull { it.key == target.key && it.key != category.key }
-                ?: cat.otherOf(category.kind)
+            val dest = target?.let { t ->
+                cat.forKind(category.kind).firstOrNull { it.key == t.key && it.key != category.key } ?: cat.otherOf(category.kind)
+            }
             val moved = state.value.allRecords.count { it.category.key == category.key }
             db.withTransaction {
-                dao.reassign(category.key, dest.key)
-                ruleDao.reassign(category.key, dest.key)
+                if (dest != null) {
+                    dao.reassign(category.key, dest.key)
+                    ruleDao.reassign(category.key, dest.key)
+                } else {
+                    dao.deleteForCategory(category.key)
+                    ruleDao.deleteForCategory(category.key)
+                }
                 budgetDao.deleteForCategory(category.key)
                 chipDao.deleteForCategory(category.key)
                 prefDao.delete(category.key)
                 categoryDao.delete(id)
             }
-            showToast(if (moved > 0) "已删除 · $moved 笔移到「${dest.label}」" else "已删除分类 · ${category.label}")
+            showToast(
+                when {
+                    moved == 0 -> "已删除分类 · ${category.label}"
+                    dest != null -> "已删除 · $moved 笔移到「${dest.label}」"
+                    else -> "已删除分类和 $moved 笔账单"
+                },
+            )
         }
     }
 
@@ -711,6 +772,9 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
     private var toastSeq = 0L
 
     companion object {
+        /** Ids per `IN (…)` query, under SQLite's bound-variable limit. */
+        private const val SQL_BATCH = 500
+
         /** [valueChips] scope for the amount fields of [period]'s total and custom budgets. */
         fun budgetChipScope(period: BudgetPeriod) = "\$budget:" + period.key
 
@@ -718,7 +782,7 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
         fun plainYuan(cents: Long): String = BigDecimal.valueOf(cents).movePointLeft(2).stripTrailingZeros().toPlainString()
     }
 
-    private fun showToast(text: String, undo: RecordEntity? = null) {
+    private fun showToast(text: String, undo: List<RecordEntity> = emptyList()) {
         _toast.value = ToastMessage(++toastSeq, text, undo)
     }
 }

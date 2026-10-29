@@ -15,9 +15,9 @@ object Backup {
      * v2 adds custom budgets, v3 custom categories, note chips and year/day budgets, v4 record
      * photos (embedded as Base64), category edits / order / colours and recurring rules, v5 several
      * days of the month / dates of the year per recurring rule (`days` is a bit set for monthly,
-     * `yearDays` a list for yearly). Older files still import.
+     * `yearDays` a list for yearly), v6 hidden built-in categories. Older files still import.
      */
-    const val VERSION = 5
+    const val VERSION = 6
 
     /** Everything a backup holds; [images] maps a photo file name to its JPEG bytes. */
     data class Decoded(
@@ -85,7 +85,8 @@ object Backup {
                     .put("icon", p.icon ?: JSONObject.NULL)
                     .put("hue", p.hue ?: JSONObject.NULL)
                     .put("color", p.color ?: JSONObject.NULL)
-                    .put("sortOrder", p.sortOrder ?: JSONObject.NULL),
+                    .put("sortOrder", p.sortOrder ?: JSONObject.NULL)
+                    .put("hidden", p.hidden),
             )
         }
         val ruleRows = JSONArray()
@@ -200,6 +201,7 @@ object Backup {
                 hue = o.optStringOrNull("hue"),
                 color = o.optIntOrNull("color"),
                 sortOrder = o.optIntOrNull("sortOrder"),
+                hidden = o.optBoolean("hidden", false),
             )
         }
         val ruleRows = root.optJSONArray("recurring") ?: JSONArray()

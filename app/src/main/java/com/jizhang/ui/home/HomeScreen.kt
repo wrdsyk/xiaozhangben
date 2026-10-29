@@ -80,8 +80,6 @@ import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.jizhang.LedgerState
-import com.jizhang.domain.BudgetProgress
-import com.jizhang.ui.budget.BudgetCard
 import com.jizhang.domain.DayGroup
 import com.jizhang.domain.EntryKind
 import com.jizhang.domain.Record
@@ -120,7 +118,6 @@ fun SharedTransitionScope.HomeScreen(
     state: LedgerState,
     listState: LazyListState,
     justAdded: Long?,
-    budgets: List<BudgetProgress>,
     onOpenBudgets: () -> Unit,
     animatedScope: AnimatedVisibilityScope,
     contentPadding: PaddingValues,
@@ -223,9 +220,6 @@ fun SharedTransitionScope.HomeScreen(
                     fadeInSpec = Motion.fade(), placementSpec = Motion.offset, fadeOutSpec = Motion.fade(),
                 ),
             )
-        }
-        if (budgets.isNotEmpty() && state.month == YearMonth.from(state.today)) {
-            item(key = "budgets") { BudgetCard(budgets, onOpenBudgets, Modifier.padding(horizontal = 20.dp).rise(2).animateItem()) }
         }
         if (state.loaded && state.days.isEmpty()) {
             item(key = "empty") { EmptyMonth(Modifier.padding(horizontal = 20.dp).rise(2)) }

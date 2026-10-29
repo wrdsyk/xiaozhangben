@@ -117,7 +117,7 @@ fun ColumnScope.RecurringForm(
     // Latest day the wheels offer: far enough ahead for any plan, and never short of a saved date.
     val latest = remember { maxOf(today.plusYears(10), existing?.start ?: today, existing?.end ?: today) }
 
-    val categories = catalog.forKind(kind)
+    val categories = catalog.forKind(kind, existing?.category)
     val category = categories.firstOrNull { it.key == categoryKey } ?: categories.first()
     val cents = parseYuan(amount)
     val days = when (pattern) {

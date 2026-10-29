@@ -94,4 +94,25 @@ class CategoryCatalogTest {
         assertEquals("other", CategoryCatalog.Builtin.of("whatever").key)
         assertEquals(Category.Salary, CategoryCatalog.Builtin.of("salary"))
     }
+
+    @Test fun hiddenBuiltinsLeaveTheGridButStillResolve() {
+        val cat = CategoryCatalog(
+            customs = listOf(pet),
+            prefs = mapOf(
+                "fun" to CategoryPref("fun", name = "玩", hidden = true),
+                "study" to CategoryPref("study", hidden = true),
+                // "其他" catches deleted categories, so it never hides.
+                "other" to CategoryPref("other", hidden = true),
+            ),
+        )
+        val visible = keys(cat.forKind(EntryKind.Expense))
+        assertEquals(builtinExpense - setOf("fun", "study") + listOf("c1", "other"), visible)
+        assertEquals(listOf("fun", "study"), keys(cat.hiddenOf(EntryKind.Expense)))
+        // Its bills still show under it, edits included, and its name stays taken.
+        assertEquals("玩", cat.of("fun").label)
+        assertEquals(true, cat.labelsOf(EntryKind.Expense).any { it.label == "玩" })
+        // Something filed under a hidden one keeps it in its picker.
+        assertEquals(visible + "fun", keys(cat.forKind(EntryKind.Expense, cat.of("fun"))))
+        assertEquals(visible, keys(cat.forKind(EntryKind.Expense, cat.of("food"))))
+    }
 }

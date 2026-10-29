@@ -118,40 +118,6 @@ fun LevelBar(fraction: Float, level: BudgetLevel, modifier: Modifier = Modifier,
 private fun BudgetProgress.leftText(): String =
     if (over) "超出 ¥${formatCentsShort(-leftCents)}" else "剩 ¥${formatCentsShort(leftCents)}"
 
-/** Home-screen card listing custom budgets; tapping it opens the budgets page. */
-@Composable
-fun BudgetCard(budgets: List<BudgetProgress>, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val c = LedgerTheme.colors
-    Column(
-        modifier
-            .fillMaxWidth()
-            .glass(26.dp)
-            .tap(label = "管理预算", pressedScale = .98f, onClick = onOpen)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("预算", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = c.ink, modifier = Modifier.weight(1f))
-            Text("管理", fontSize = 12.sp, color = c.sub)
-            Glyph(LedgerIcons.get("chevr"), 14.dp, c.sub)
-        }
-        budgets.take(4).forEach { p ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(p.budget.displayName, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.ink, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        p.leftText(),
-                        style = numberStyle(12.sp, FontWeight.Medium, 0f),
-                        color = if (p.over) c.levelColor(BudgetLevel.Red) else c.sub,
-                    )
-                }
-                BudgetBar(p)
-            }
-        }
-        if (budgets.size > 4) Text("还有 ${budgets.size - 4} 个", fontSize = 12.sp, color = c.sub)
-    }
-}
-
 private val TotalCardHeight = 150.dp
 
 private val BudgetPeriod.totalName: String
@@ -183,7 +149,6 @@ fun BudgetScreen(
     contentPadding: PaddingValues,
 ) {
     val form = LocalFormSheet.current
-    val expenseCategories = state.catalog.forKind(EntryKind.Expense)
     var sort by rememberSaveable { mutableStateOf(lastSort) }
     val sorted = remember(budgets, sort) { sort.apply(budgets) }
     val sections = remember(sorted) {
@@ -195,7 +160,7 @@ fun BudgetScreen(
     fun editBudget(existing: Budget?) = form.open { s ->
         BudgetForm(
             existing = existing,
-            categories = expenseCategories,
+            categories = state.catalog.forKind(EntryKind.Expense, existing?.category),
             chips = { vm.valueChips(LedgerViewModel.budgetChipScope(it)) },
             onAddChip = { p, text -> vm.addValueChip(LedgerViewModel.budgetChipScope(p), text) },
             onRemoveChip = { p, chip -> vm.removeValueChip(LedgerViewModel.budgetChipScope(p), chip) },

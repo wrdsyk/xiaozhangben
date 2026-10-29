@@ -93,6 +93,19 @@ interface RecordDao {
     @Query("UPDATE records SET category = :to WHERE category = :from")
     suspend fun reassign(from: String, to: String)
 
+    /** Moves a hand-picked batch of records into one category. */
+    @Query("UPDATE records SET category = :to WHERE id IN (:ids)")
+    suspend fun reassignIds(ids: List<Long>, to: String)
+
+    @Query("SELECT * FROM records WHERE id IN (:ids)")
+    suspend fun byIds(ids: List<Long>): List<RecordEntity>
+
+    @Query("DELETE FROM records WHERE id IN (:ids)")
+    suspend fun deleteIds(ids: List<Long>)
+
+    @Query("DELETE FROM records WHERE category = :category")
+    suspend fun deleteForCategory(category: String)
+
     @Transaction
     suspend fun replaceAll(records: List<RecordEntity>) {
         deleteAll()
@@ -232,7 +245,8 @@ interface NoteChipDao {
 
 /**
  * Per-category edits, keyed by [Category.key]. For built-ins: a new name / icon / hue / colour
- * (null = unchanged). For every category: its position in the add sheet's grid after a drag.
+ * (null = unchanged), and whether the user hid it from the grid. For every category: its position
+ * in the add sheet's grid after a drag.
  */
 @Entity(tableName = "category_prefs")
 data class CategoryPrefEntity(
@@ -242,6 +256,8 @@ data class CategoryPrefEntity(
     val hue: String? = null,
     val color: Int? = null,
     val sortOrder: Int? = null,
+    /** Built-ins only: left out of the grid and pickers; its bills still show under it. */
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
 )
 
 @Dao
@@ -310,9 +326,12 @@ interface RecurringDao {
     @Update
     suspend fun update(rule: RecurringEntity)
 
-    /** Moves rules of a deleted custom category into "其他". */
+    /** Moves rules of a deleted custom category into the category the user picked. */
     @Query("UPDATE recurring SET category = :to WHERE category = :from")
     suspend fun reassign(from: String, to: String)
+
+    @Query("DELETE FROM recurring WHERE category = :category")
+    suspend fun deleteForCategory(category: String)
 
     @Query("UPDATE recurring SET lastDay = :day WHERE id = :id")
     suspend fun markRun(id: Long, day: Long)
@@ -336,7 +355,7 @@ interface RecurringDao {
         RecordEntity::class, BudgetEntity::class, CustomCategoryEntity::class, NoteChipEntity::class,
         CategoryPrefEntity::class, RecurringEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -409,6 +428,13 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+/** v6: built-in categories can be hidden instead of deleted. Existing data is untouched. */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `category_prefs` ADD COLUMN `hidden` INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 fun BudgetEntity.toDomain(catalog: CategoryCatalog) = Budget(
     id = id,
     name = name,
@@ -434,6 +460,7 @@ fun CategoryPrefEntity.toDomain() = CategoryPref(
     hue = hue?.let { h -> Hue.entries.firstOrNull { it.name == h } },
     color = color,
     sortOrder = sortOrder,
+    hidden = hidden,
 )
 
 fun RecurringEntity.toDomain(catalog: CategoryCatalog) = RecurringRule(

@@ -55,17 +55,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,6 +77,7 @@ import com.jizhang.ui.budget.BudgetScreen
 import com.jizhang.ui.components.AmbientBackground
 import com.jizhang.ui.components.FormSheetController
 import com.jizhang.ui.components.FormSheetHost
+import com.jizhang.ui.components.RecordButton
 import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalEntrancePlayed
@@ -93,7 +90,6 @@ import com.jizhang.ui.components.liquidContent
 import com.jizhang.ui.components.liquidSource
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.liftedPill
-import com.jizhang.ui.components.solidEdge
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.detail.DetailScreen
 import com.jizhang.ui.home.HomeScreen
@@ -210,7 +206,6 @@ fun LedgerApp(vm: LedgerViewModel) {
                                             state = state,
                                             listState = homeList,
                                             justAdded = justAdded,
-                                            budgets = budgets,
                                             onOpenBudgets = { tab = Tab.Budget },
                                             animatedScope = animatedScope,
                                             contentPadding = listPadding,
@@ -391,18 +386,7 @@ private fun BottomBar(
                 }
             }
         }
-        val fabShape = CircleShape
-        Box(
-            Modifier
-                .size(62.dp)
-                .onGloballyPositioned { onFabPositioned(it.boundsInRoot().center) }
-                .dropShadow(fabShape, Shadow(28.dp, c.accentShadow, spread = (-12).dp, offset = DpOffset(0.dp, 14.dp)))
-                .clip(fabShape)
-                .background(Brush.verticalGradient(0f to lerp(c.accent, Color.White, c.sheen.alpha), .55f to c.accent))
-                .solidEdge(31.dp)
-                .tap(label = "记一笔", onClick = onAdd),
-            contentAlignment = Alignment.Center,
-        ) { Glyph(LedgerIcons.get("plus", 2.2f), 26.dp, c.onAccent) }
+        RecordButton(62.dp, onAdd, Modifier.onGloballyPositioned { onFabPositioned(it.boundsInRoot().center) })
     }
 }
 
@@ -414,7 +398,7 @@ private fun ToastHost(message: ToastMessage?, onUndo: (ToastMessage) -> Unit, on
     if (message != null) last = message
     LaunchedEffect(message?.id) {
         val m = message ?: return@LaunchedEffect
-        delay(if (m.undo != null) 5_000 else 2_100)
+        delay(if (m.undo.isNotEmpty()) 5_000 else 2_100)
         onTimeout(m.id)
     }
     Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
@@ -428,15 +412,15 @@ private fun ToastHost(message: ToastMessage?, onUndo: (ToastMessage) -> Unit, on
                 Modifier
                     .height(44.dp)
                     .glass(22.dp)
-                    .padding(start = 9.dp, end = if (m.undo != null) 6.dp else 16.dp),
+                    .padding(start = 9.dp, end = if (m.undo.isNotEmpty()) 6.dp else 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(Modifier.size(24.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
-                    Glyph(LedgerIcons.get(if (m.undo != null) "trash" else "check", 2.6f), 14.dp, c.onAccent)
+                    Glyph(LedgerIcons.get(if (m.undo.isNotEmpty()) "trash" else "check", 2.6f), 14.dp, c.onAccent)
                 }
                 Text(m.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1)
-                if (m.undo != null) {
+                if (m.undo.isNotEmpty()) {
                     Box(
                         Modifier.height(32.dp).clip(RoundedCornerShape(16.dp)).background(c.chipStrong)
                             .tap(label = "撤销删除") { onUndo(m) }.padding(horizontal = 12.dp),
