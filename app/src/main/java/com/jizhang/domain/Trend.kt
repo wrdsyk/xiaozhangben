@@ -36,6 +36,13 @@ data class Period(val granularity: Granularity, val start: LocalDate) {
 
     operator fun contains(date: LocalDate): Boolean = date.within(start, endInclusive)
 
+    /**
+     * The period of the same kind right before this one: last year, last month, last week. The day
+     * before [start] is the last day of it, so January steps back to the previous year's December
+     * and ISO week 1 to the last week (52 or 53) of the previous week-year.
+     */
+    val previous: Period get() = containing(granularity, start.minusDays(1))
+
     /** The ISO week-based year of a [Granularity.Week] period (not always [start]'s calendar year). */
     val weekYear: Int get() = start.get(WeekFields.ISO.weekBasedYear())
 

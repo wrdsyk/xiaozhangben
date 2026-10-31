@@ -41,6 +41,8 @@ import com.jizhang.domain.Repeat
 import com.jizhang.domain.TotalBudget
 import com.jizhang.domain.formatCents
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -185,7 +187,12 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
 
     // Records -------------------------------------------------------------------------------
 
-    fun save(id: Long?, category: Category, cents: Long, note: String, at: LocalDateTime, photos: List<String> = emptyList()) {
+    /**
+     * Writes the record in the background. The result is the record's id (the new one for an add),
+     * completed once the row is in the database, so the caller can find it in [state] afterwards.
+     */
+    fun save(id: Long?, category: Category, cents: Long, note: String, at: LocalDateTime, photos: List<String> = emptyList()): Deferred<Long> {
+        val written = CompletableDeferred<Long>()
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val stored = ImageStore.join(photos.take(ImageStore.MAX_PER_RECORD))
@@ -198,6 +205,7 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
                 )
                 _justAdded.value = newId
                 month.value = YearMonth.from(at)
+                written.complete(newId)
                 showToast("已记一笔 · ${category.label} ¥${formatCents(cents)}")
             } else {
                 val old = state.value.allRecords.firstOrNull { it.id == id }
@@ -207,9 +215,11 @@ class LedgerViewModel(private val container: AppContainer) : ViewModel() {
                         createdAt = now, demo = old?.demo ?: false, images = stored, ruleId = old?.ruleId,
                     ),
                 )
+                written.complete(id)
                 showToast("已保存修改")
             }
         }
+        return written
     }
 
     fun delete(record: Record) {

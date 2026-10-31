@@ -66,9 +66,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,6 +86,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -91,17 +95,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.jizhang.domain.AmountInput
 import com.jizhang.CategoryUsage
 import com.jizhang.LedgerViewModel
@@ -114,6 +122,7 @@ import com.jizhang.domain.formatCents
 import com.jizhang.ui.chipDate
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
+import com.jizhang.ui.components.blockTouches
 import com.jizhang.ui.forms.CategoryForm
 import com.jizhang.ui.forms.DateForm
 import com.jizhang.ui.forms.NoteForm
@@ -177,7 +186,8 @@ fun AddSheet(
             shown = null
         }
     }
-    val current = shown ?: return
+    // A new request is on screen (and blocking touches) from its first frame, not the one after.
+    val current = shown ?: request ?: return
     // A form opened from inside the sheet (note, date, category) handles back itself.
     val forms = LocalFormSheet.current
     BackHandler(enabled = request != null && !forms.isOpen, onBack = onClose)
@@ -194,6 +204,11 @@ fun AddSheet(
                 GenericShape { _, _ -> addOval(Rect(o, maxRadius * p.coerceAtLeast(0f) + 1f)) }
             }
         }
+        // While the sheet is open or opening nothing under it may be touched. The growing circle clips
+        // hit testing and the sheet has gaps with no touch handler, so without this a tap there reaches
+        // the list below and opens a bill. A sibling under the sheet, unclipped: the sheet's own
+        // controls are hit first. Closing lets touches through again (this leaves the tree at once).
+        if (request != null) Box(Modifier.fillMaxSize().blockTouches())
         Box(
             Modifier
                 .fillMaxSize()
@@ -384,8 +399,9 @@ private fun SheetContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CategoryChip(category)
-                Spacer(Modifier.width(10.dp).weight(1f))
-                AmountReadout(input)
+                Spacer(Modifier.width(10.dp))
+                // Takes whatever the chip leaves, and fits the typed expression into it.
+                AmountReadout(input, Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -976,7 +992,8 @@ private fun AddTile(modifier: Modifier) {
 private fun CategoryChip(category: Category) {
     val c = LedgerTheme.colors
     Row(
-        Modifier.height(34.dp).chip(17.dp, strong = true).padding(start = 5.dp, end = 12.dp),
+        // Capped: a long name gives way (ellipsis) before the amount beside it has to shrink for it.
+        Modifier.height(34.dp).widthIn(max = 132.dp).chip(17.dp, strong = true).padding(start = 5.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -984,52 +1001,124 @@ private fun CategoryChip(category: Category) {
             Modifier.size(24.dp).clip(RoundedCornerShape(9.dp)).background(c.hue(category)),
             contentAlignment = Alignment.Center,
         ) { Glyph(LedgerIcons.of(category, 2.2f), 14.dp, c.onTile) }
-        Text(category.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.ink)
+        Text(
+            category.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.ink,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+        )
     }
 }
 
+/** The typed amount shrinks from 48sp to 20sp as the expression grows; beyond that its start is cut. */
+private const val AMOUNT_MAX_SP = 48
+private const val AMOUNT_MIN_SP = 20
+
+private fun yenStyle() = numberStyle(22.sp, FontWeight.Normal, 0f)
+
+private fun amountStyle(sp: Float) = numberStyle(sp.sp, FontWeight.Light, -.02f)
+
+/**
+ * Picks the size of the typed amount by measuring it. TypedAmount lays the characters out one by
+ * one, so the real widths just add up; guessing from the length is how the end of "120.11-17.82"
+ * used to be pushed out of the card.
+ */
+private class AmountFit(private val measurer: TextMeasurer, private val base: TextStyle) {
+    private val widths = HashMap<Int, Int>()
+
+    /** The ¥ in front of the digits. */
+    val yen: Int = measurer.measure("¥", base.merge(yenStyle())).size.width
+
+    private fun glyph(ch: Char, sp: Int): Int = widths.getOrPut(sp * 65536 + ch.code) {
+        // TypedAmount draws a minus as a real minus sign.
+        measurer.measure(if (ch == '-') "−" else ch.toString(), base.merge(amountStyle(sp.toFloat()))).size.width
+    }
+
+    fun width(text: String, sp: Int): Int {
+        var w = 0
+        for (ch in text) w += glyph(ch, sp)
+        return w
+    }
+
+    /** The largest size (even sp, [AMOUNT_MAX_SP] down) at which [text] fits [room] px; the smallest if none does. */
+    fun fit(text: String, room: Int): Int {
+        val widest = width(text, AMOUNT_MAX_SP)
+        if (widest <= room) return AMOUNT_MAX_SP
+        // Widths scale with the size: start near the answer, then settle it with real measurements
+        // (every glyph is rounded up to whole pixels, so the estimate can be a step off either way).
+        var sp = (AMOUNT_MAX_SP * room.toFloat() / widest).toInt().coerceIn(AMOUNT_MIN_SP, AMOUNT_MAX_SP)
+        sp -= sp % 2
+        while (sp + 2 <= AMOUNT_MAX_SP && width(text, sp + 2) <= room) sp += 2
+        while (sp > AMOUNT_MIN_SP && width(text, sp) > room) sp -= 2
+        return sp
+    }
+}
+
+/** Clips the left and right edges only: typed digits rise in from below the line, so top and bottom stay open. */
+private fun Modifier.clipSides(): Modifier = drawWithContent {
+    clipRect(top = -size.height, bottom = size.height * 2) { this@drawWithContent.drawContent() }
+}
+
+/**
+ * The amount being typed, right-aligned in the room [modifier] gives it. Its size is the largest at
+ * which the whole expression fits that room, so a long sum such as "120.11-17.82" is never cut off
+ * at the end; only past the smallest size does the start give way, and the end (with the caret)
+ * stays in view.
+ */
 @Composable
-private fun AmountReadout(input: AmountInput) {
+private fun AmountReadout(input: AmountInput, modifier: Modifier = Modifier) {
     val c = LedgerTheme.colors
-    val len = input.text.length
-    val size by animateFloatAsState(
-        when {
-            len <= 8 -> 48f
-            len <= 12 -> 36f
-            else -> 28f
-        },
-        Motion.layout(), label = "amountSize",
-    )
+    val density = LocalDensity.current
+    // The measurer's own cache is no use here: AmountFit keeps the glyph widths it needs.
+    val measurer = rememberTextMeasurer(cacheSize = 0)
+    val base = LocalTextStyle.current
+    val fitter = remember(measurer, base) { AmountFit(measurer, base) }
     val caret by rememberInfiniteTransition("caret").animateFloat(
         initialValue = 1f, targetValue = 0f,
         animationSpec = infiniteRepeatable(keyframes { durationMillis = 1100; 1f at 549 using LinearEasing; 0f at 550 }, RepeatMode.Restart),
         label = "caret",
     )
-    Column(horizontalAlignment = Alignment.End) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("¥", style = numberStyle(22.sp, FontWeight.Normal, 0f), color = c.sub, modifier = Modifier.padding(end = 4.dp))
-            if (input.isEmpty) {
-                Text("0", style = numberStyle(48.sp, FontWeight.Light, -.02f), color = c.placeholder)
-            } else {
-                TypedAmount(input.text, numberStyle(size.sp, FontWeight.Light, -.02f), c.ink)
-            }
-            Box(
-                Modifier
-                    .padding(start = 4.dp)
-                    .width(2.dp)
-                    .height(36.dp)
-                    .graphicsLayer { alpha = caret }
-                    .clip(RoundedCornerShape(1.dp))
-                    .background(c.accent),
-            )
+    BoxWithConstraints(modifier, contentAlignment = Alignment.CenterEnd) {
+        // What the digits get: the width less the ¥ and its 4dp gap, and the caret with its 4dp gap.
+        val room = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth - fitter.yen - with(density) { (4.dp + 4.dp + 2.dp).roundToPx() }
+        } else {
+            Int.MAX_VALUE
         }
-        if (input.hasOperator) {
-            Text(
-                "= ${formatCents(input.totalCents())}",
-                style = numberStyle(13.sp, FontWeight.Normal, 0f),
-                color = c.sub,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+        val target = remember(input.text, room, fitter) { if (input.isEmpty) AMOUNT_MAX_SP else fitter.fit(input.text, room) }
+        val size by animateFloatAsState(target.toFloat(), Motion.layout(), label = "amountSize")
+        Column(horizontalAlignment = Alignment.End) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("¥", style = yenStyle(), color = c.sub, modifier = Modifier.padding(end = 4.dp))
+                // Takes what the ¥ leaves. The digits are right-aligned and may be wider than that
+                // (only at the smallest size): the overflow is on the left, where it is clipped.
+                Box(Modifier.weight(1f, fill = false).clipSides(), contentAlignment = Alignment.CenterEnd) {
+                    Row(Modifier.wrapContentWidth(Alignment.End, unbounded = true), verticalAlignment = Alignment.CenterVertically) {
+                        if (input.isEmpty) {
+                            Text("0", style = amountStyle(AMOUNT_MAX_SP.toFloat()), color = c.placeholder)
+                        } else {
+                            TypedAmount(input.text, amountStyle(size), c.ink)
+                        }
+                        Box(
+                            Modifier
+                                .padding(start = 4.dp)
+                                .width(2.dp)
+                                .height((size * .75f).dp)
+                                .graphicsLayer { alpha = caret }
+                                .clip(RoundedCornerShape(1.dp))
+                                .background(c.accent),
+                        )
+                    }
+                }
+            }
+            if (input.hasOperator) {
+                Text(
+                    "= ${formatCents(input.totalCents())}",
+                    style = numberStyle(13.sp, FontWeight.Normal, 0f),
+                    color = c.sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }

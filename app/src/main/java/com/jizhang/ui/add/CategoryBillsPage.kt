@@ -61,6 +61,7 @@ import com.jizhang.ui.components.FormButton
 import com.jizhang.ui.components.FormTitle
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
+import com.jizhang.ui.components.blockTouches
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.forms.ConfirmForm
@@ -90,6 +91,9 @@ internal fun CategoryBillsPage(
 ) {
     var last by remember { mutableStateOf(category) }
     if (category != null) last = category
+    // Under the sliding page and not part of it: the strip it hasn't covered yet (and any gap in the
+    // page) must not reach the add sheet below. Leaves with the page's exit, which lets touches through.
+    if (category != null) Box(Modifier.fillMaxSize().blockTouches())
     AnimatedVisibility(
         visible = category != null,
         enter = slideInHorizontally(Motion.offset) { it } + fadeIn(Motion.fade()),

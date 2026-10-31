@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -260,8 +261,15 @@ private fun TotalsPager(totals: List<TotalBudget>, onEdit: (TotalBudget) -> Unit
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState(initialPage = 1.coerceAtMost(totals.lastIndex.coerceAtLeast(0))) { totals.size }
+    // Tap-driven scrolls in flight, and where the latest is heading. settledPage only moves once the
+    // spring has fully rested, long after the dot flips, so a tap ticks in its own handler instead;
+    // its scroll passes pages on the way (年 from 日 crosses 月), so the page-change tick below
+    // stays quiet while any runs. A swipe ticks as each page comes under the finger. A count, not
+    // a flag: an interrupted scroll unwinds after its successor started and must not clear it.
+    var tapScrolls by remember { mutableIntStateOf(0) }
+    var tapTarget by remember { mutableIntStateOf(0) }
     LaunchedEffect(pager) {
-        snapshotFlow { pager.settledPage }.drop(1).collect { haptics.tick() }
+        snapshotFlow { pager.currentPage }.drop(1).collect { if (tapScrolls == 0) haptics.tick() }
     }
     Column(modifier.fillMaxWidth()) {
         HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth(), beyondViewportPageCount = 1) { page ->
@@ -284,7 +292,21 @@ private fun TotalsPager(totals: List<TotalBudget>, onEdit: (TotalBudget) -> Unit
                 val w by animateDpAsState(if (on) 16.dp else 6.dp, Motion.layout(), label = "pagerDotWidth")
                 Column(
                     Modifier.size(48.dp).tap(label = "查看${t.period.totalName}") {
-                        if (pager.currentPage != i) scope.launch { pager.animateScrollToPage(i, animationSpec = Motion.layout()) }
+                        // currentPage only flips half-way through a tap's scroll, so a second tap on
+                        // the same dot would buzz again; compare with where the scroll is heading.
+                        val heading = if (tapScrolls > 0) tapTarget else pager.currentPage
+                        if (heading != i) {
+                            haptics.tick()
+                            scope.launch {
+                                tapScrolls++
+                                tapTarget = i
+                                try {
+                                    pager.animateScrollToPage(i, animationSpec = Motion.layout())
+                                } finally {
+                                    tapScrolls--
+                                }
+                            }
+                        }
                     },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),

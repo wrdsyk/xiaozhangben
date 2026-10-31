@@ -49,6 +49,7 @@ import com.jizhang.ui.components.CategoryTile
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalHazeState
 import com.jizhang.ui.components.PhotoStrip
+import com.jizhang.ui.components.blockTouches
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.fullDateTime
@@ -105,7 +106,10 @@ fun SharedTransitionScope.DetailScreen(
             .then(if (haze != null) Modifier.hazeBlur(HazeInput.Backdrop(haze), HazeBlurStyle { blurRadius(26.dp) }) else Modifier)
             .background(c.sheet)
             // Content on a layer of its own, so its animations don't re-run the full-screen blur.
-            .graphicsLayer(),
+            .graphicsLayer()
+            // The list it was opened from fades out beneath and stays touchable meanwhile: a tap on a
+            // gap here (a second tap on the same row, say) must not open another bill.
+            .blockTouches(),
     ) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),

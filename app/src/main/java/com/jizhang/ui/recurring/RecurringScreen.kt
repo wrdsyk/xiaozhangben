@@ -58,6 +58,7 @@ import com.jizhang.ui.components.FormButton
 import com.jizhang.ui.components.Glyph
 import com.jizhang.ui.components.LocalFormSheet
 import com.jizhang.ui.components.LocalHazeState
+import com.jizhang.ui.components.blockTouches
 import com.jizhang.ui.components.glass
 import com.jizhang.ui.components.tap
 import com.jizhang.ui.dayLabel
@@ -88,6 +89,9 @@ fun RecurringScreen(
     // A form opened from this page handles back itself.
     val form = LocalFormSheet.current
     BackHandler(enabled = visible && !form.isOpen, onBack = onClose)
+    // Under the sliding page and not part of it, so the strip it hasn't covered yet can't reach the
+    // tab beneath. Leaves with the page's exit, which lets touches through again.
+    if (visible) Box(Modifier.fillMaxSize().blockTouches())
     AnimatedVisibility(
         visible = visible,
         enter = slideInHorizontally(Motion.offset) { it } + fadeIn(Motion.fade()),

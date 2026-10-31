@@ -10,7 +10,9 @@ sealed interface Key {
 
 /**
  * The keypad's expression, e.g. "12.5+3-1". Each operand allows at most 7 integer digits and
- * 2 decimals. [press] returns null when a key is rejected so the UI can shake and buzz.
+ * 2 decimals, the whole expression [MAX_LENGTH] characters (the readout shrinks its type to fit,
+ * so a long sum is never cut off). [press] returns null when a key is rejected so the UI can
+ * shake and buzz.
  */
 data class AmountInput(val text: String = "") {
 
@@ -76,7 +78,7 @@ data class AmountInput(val text: String = "") {
 
     companion object {
         const val MAX_INT_DIGITS = 7
-        const val MAX_LENGTH = 24
+        const val MAX_LENGTH = 40
 
         /** Prefills the keypad when editing: 3200 → "32", 3250 → "32.5". */
         fun fromCents(cents: Long): AmountInput = AmountInput(formatCentsShort(cents).replace(",", ""))

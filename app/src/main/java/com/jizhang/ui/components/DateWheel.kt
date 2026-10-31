@@ -69,6 +69,14 @@ private val KeepOverscroll = object : NestedScrollConnection {
     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = available
 }
 
+/**
+ * What a [DateWheel] has told its parent: the latest date, and the reports the parent's state may
+ * still be handing back as `date`, oldest first.
+ */
+private class Told(var last: LocalDate) {
+    val echoes = ArrayList<LocalDate>()
+}
+
 private val weekday = mapOf(
     DayOfWeek.MONDAY to "周一", DayOfWeek.TUESDAY to "周二", DayOfWeek.WEDNESDAY to "周三",
     DayOfWeek.THURSDAY to "周四", DayOfWeek.FRIDAY to "周五", DayOfWeek.SATURDAY to "周六",
@@ -80,6 +88,11 @@ private val weekday = mapOf(
  * on every step, enlarges its centred row and fades the rest. Dates after [latest] (and days past
  * the month's end) are dimmed; landing on one springs back to the latest valid value. [latest] is
  * [today] for records; schedules (定时记账) pass a later day. [quickPicks] shows 今天 / 昨天 / … chips.
+ *
+ * [onChange] gets the date under the lens as the user turns a wheel, not only once it comes to
+ * rest: a button tapped while a fling is still running must save what is centred, not the date
+ * from before the fling. Those live reports never move the wheels (they follow the settled date
+ * alone), so a fling is not yanked back by the parent echoing it.
  */
 @Composable
 fun DateWheel(
@@ -104,19 +117,49 @@ fun DateWheel(
     }
     fun clampDate(d: LocalDate) = clamp(d.year, d.monthValue, d.dayOfMonth)
 
-    // The wheels follow this, not [date], so a report never scrolls the wheel that sent it.
+    // The wheels follow this (the settled date), not [date], so a report never scrolls the wheel that sent it.
     var sel by remember { mutableStateOf(clampDate(date)) }
+    val report by rememberUpdatedState(onChange)
+    val told = remember { Told(date) }
+    // Every report goes through here. A repeat is skipped, and each one is kept until [date] comes
+    // back carrying it, so that round trip is not taken for a change from outside.
+    fun tell(d: LocalDate) {
+        if (d == told.last) return
+        told.last = d
+        told.echoes.add(d)
+        report(d)
+    }
     fun commit(d: LocalDate): LocalDate {
-        if (d != sel) {
-            sel = d
-            onChange(d)
-        }
+        sel = d
+        tell(d)
         return d
     }
+    // The row each wheel shows while the user turns it (null: at rest, or moved by an animation).
+    val turning = remember { arrayOfNulls<Int>(3) }
+    fun turn(wheel: Int, row: Int?) {
+        if (turning[wheel] == row) return
+        turning[wheel] = row
+        // What is centred right now, with the same clamping the settle applies.
+        tell(
+            clamp(
+                turning[0]?.let { firstYear + it } ?: sel.year,
+                turning[1]?.let { it + 1 } ?: sel.monthValue,
+                turning[2]?.let { it + 1 } ?: sel.dayOfMonth,
+            ),
+        )
+    }
     LaunchedEffect(date) {
+        val back = told.echoes.lastIndexOf(date)
+        if (back >= 0) {
+            // Our own report coming back (older ones with it): the wheels already show it.
+            told.echoes.subList(0, back + 1).clear()
+            return@LaunchedEffect
+        }
+        told.echoes.clear()
+        told.last = date
         val d = clampDate(date)
         if (d != sel) sel = d
-        if (d != date) onChange(d)
+        tell(d)
     }
 
     val maxMonth = if (sel.year == latest.year) latest.monthValue else 12
@@ -160,6 +203,7 @@ fun DateWheel(
                     enabled = { true },
                     describe = { "${firstYear + it}年" },
                     onSettle = { commit(clamp(firstYear + it, sel.monthValue, sel.dayOfMonth)).year - firstYear },
+                    onTurn = { turn(0, it) },
                     modifier = Modifier.weight(1.2f),
                 ) { i, ink, _ ->
                     WheelLabel("${firstYear + i}年", ink)
@@ -170,6 +214,7 @@ fun DateWheel(
                     enabled = { it + 1 <= maxMonth },
                     describe = { "${it + 1}月" },
                     onSettle = { commit(clamp(sel.year, it + 1, sel.dayOfMonth)).monthValue - 1 },
+                    onTurn = { turn(1, it) },
                     modifier = Modifier.weight(1f),
                 ) { i, ink, _ ->
                     WheelLabel("${i + 1}月", ink)
@@ -180,6 +225,7 @@ fun DateWheel(
                     enabled = { it + 1 <= maxDay },
                     describe = { "${it + 1}日" },
                     onSettle = { commit(clamp(sel.year, sel.monthValue, it + 1)).dayOfMonth - 1 },
+                    onTurn = { turn(2, it) },
                     modifier = Modifier.weight(1f),
                 ) { i, ink, distance ->
                     val day = i + 1
@@ -217,7 +263,9 @@ private fun LazyListState.distanceOf(i: Int): Float {
 /**
  * One snapping wheel. It scrolls itself to [target] whenever that changes; when the user lets go
  * it hands the centred index to [onSettle], which returns the index actually kept (a disabled row
- * springs back to it).
+ * springs back to it). While the user's own scroll runs, [onTurn] gets the centred index at every
+ * step, so the parent knows it before the wheel comes to rest; it gets null once an animation or
+ * the settle takes the wheel over.
  */
 @Composable
 private fun Wheel(
@@ -226,6 +274,7 @@ private fun Wheel(
     enabled: (Int) -> Boolean,
     describe: (Int) -> String,
     onSettle: (Int) -> Int,
+    onTurn: (Int?) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (index: Int, ink: Color, distance: () -> Float) -> Unit,
 ) {
@@ -236,6 +285,7 @@ private fun Wheel(
     val state = rememberLazyListState(initialFirstVisibleItemIndex = target.coerceIn(0, count - 1))
     val fling = rememberSnapFlingBehavior(state, SnapPosition.Center)
     val settle by rememberUpdatedState(onSettle)
+    val turned by rememberUpdatedState(onTurn)
     var auto by remember { mutableStateOf<Job?>(null) }
 
     // With two rows of padding above, the first visible item sits in the middle slot.
@@ -248,6 +298,8 @@ private fun Wheel(
     }
 
     fun go(i: Int) {
+        // The animation goes where the parent already knows it should, and cancels any scroll of the user's.
+        turned(null)
         auto = scope.launch {
             val delta = (i - state.firstVisibleItemIndex) * rowPx - state.firstVisibleItemScrollOffset
             if (delta != 0) state.animateScrollBy(delta.toFloat(), Motion.layout())
@@ -255,7 +307,11 @@ private fun Wheel(
     }
 
     LaunchedEffect(state) {
-        snapshotFlow { centered }.distinctUntilChanged().drop(1).collect { haptics.tick() }
+        snapshotFlow { centered }.distinctUntilChanged().drop(1).collect {
+            haptics.tick()
+            // An animation's own steps are not the user's choice; the commit that sent it has told the parent.
+            if (auto?.isActive != true) turned(it)
+        }
     }
     // A user scroll that came to rest: keep it, or spring back to what the parent allows.
     LaunchedEffect(state) {
@@ -267,6 +323,8 @@ private fun Wheel(
             if (state.isScrollInProgress || auto?.isActive == true) return@collect
             val kept = settle(centered)
             if (kept != centered) go(kept)
+            // At rest: the settled date speaks for this wheel from here on.
+            turned(null)
         }
     }
     LaunchedEffect(target) {

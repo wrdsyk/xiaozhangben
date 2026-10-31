@@ -62,6 +62,7 @@ Personal Android bookkeeping app, for the owner's own use only. It has no server
   - Build it from `FormSheet.kt` pieces: `FormTitle`, `FormField`, `Segmented`, `ChoiceChips`, `FormActions`.
   - Ready-made forms live in `ui/forms/Forms.kt`. Dates use `DateWheel`.
 - Full-screen overlays (add sheet, form host) are stacked in `LedgerApp`. A later `BackHandler` wins, so any handler under an open form checks `!LocalFormSheet.current.isOpen`. Handlers inside a form that need back first (e.g. note chips in edit mode) take `backClaims`.
+  - Each overlay puts `Modifier.blockTouches()` (`FormSheet.kt`) under its content, unclipped, so taps on its gaps or outside its growing/sliding bounds don't reach the screen beneath. It must never consume events: a consuming ancestor cancels its children's presses and drags.
 - Dragging down closes a form (`FormSheetHost`): a 48dp strip behind the form's first rows takes the finger wherever the form has nothing to touch, and a scrollable form hands its over-scroll to the sheet through `nestedScroll`. A scroller that must keep its over-scroll (the `DateWheel` wheels) consumes it itself, or pulling past the first row drags the sheet.
 
 ## Data

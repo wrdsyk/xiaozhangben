@@ -548,4 +548,214 @@ class TrendTest {
         assertEquals(listOf(5000L), t.expensesOf(real).map { it.amountCents })
         assertEquals(listOf(800L, 700L), t.expensesOf(merged).map { it.amountCents })
     }
+
+    // --- comparison with the period before ---------------------------------------------------
+
+    private fun change(records: List<Record>, period: Period, now: LocalDate = today) =
+        TrendChange.of(trend(records, period, now), records, now)
+
+    @Test fun previousPeriodIsTheSameKindRightBefore() {
+        assertEquals(week(d(10, 19)), week(today).previous)
+        assertEquals(month(9), month(10).previous)
+        assertEquals(year(2025), year().previous)
+        assertEquals(month(2, 2024), month(3, 2024).previous)
+        for (g in Granularity.entries) {
+            val p = Period.containing(g, today)
+            assertEquals(g, p.previous.granularity)
+            assertEquals(p.start.minusDays(1), p.previous.endInclusive)
+        }
+    }
+
+    @Test fun januaryStepsBackToDecemberOfThePreviousYear() {
+        val dec = month(1).previous
+        assertEquals(d(12, 1, 2025), dec.start)
+        assertEquals(d(12, 31, 2025), dec.endInclusive)
+        assertEquals(year(2025), year(2026).previous)
+        assertEquals(year(2023), year(2024).previous)
+    }
+
+    @Test fun isoWeekOneStepsBackToTheLastWeekOfThePreviousWeekYear() {
+        // Week 1 of 2026 opens on Monday 29 December 2025; the week before is week 52 of 2025.
+        val one = week(d(1, 1))
+        assertEquals(1, one.weekNumber)
+        assertEquals(d(12, 22, 2025), one.previous.start)
+        assertEquals(2025, one.previous.weekYear)
+        assertEquals(52, one.previous.weekNumber)
+
+        // 2026 has 53 weeks: week 1 of 2027 (from 4 January) follows week 53, which starts 28 December.
+        val next = week(d(1, 6, 2027))
+        assertEquals(1, next.weekNumber)
+        assertEquals(d(12, 28, 2026), next.previous.start)
+        assertEquals(2026, next.previous.weekYear)
+        assertEquals(53, next.previous.weekNumber)
+
+        // 30 December 2024 opens week 1 of 2025; 2024 ended on week 52 (23–29 December).
+        val y2025 = week(d(12, 31, 2024))
+        assertEquals(d(12, 23, 2024), y2025.previous.start)
+        assertEquals(2024, y2025.previous.weekYear)
+        assertEquals(52, y2025.previous.weekNumber)
+
+        // Walking back across several New Years skips no week and repeats none.
+        var p = week(d(1, 1, 2027))
+        repeat(120) {
+            val q = p.previous
+            assertEquals(p.start.minusWeeks(1), q.start)
+            assertEquals(DayOfWeek.MONDAY, q.start.dayOfWeek)
+            p = q
+        }
+    }
+
+    @Test fun moreSpendingThanLastWeekIsAnIncreaseWithAPercent() {
+        val records = listOf(
+            r(Category.Food, 126183, d(10, 21)), // last week
+            r(Category.Shop, 146183, d(10, 27)), // this week
+            r(Category.Salary, 999999, d(10, 27)), // income never counts
+            r(Category.Food, 500, d(10, 29)), // after today
+            r(Category.Food, 777, d(10, 18)), // two weeks back
+        )
+        val c = change(records, week(today))
+        assertEquals(week(d(10, 19)), c.previous)
+        assertEquals(146183, c.currentCents)
+        assertEquals(126183, c.previousCents)
+        assertEquals(20000, c.deltaCents)
+        assertEquals(Movement.Up, c.movement)
+        assertEquals("15.85", c.percent?.toPlainString())
+        assertEquals("+¥200.00", c.amountText)
+        assertEquals("+15.85%", c.percentText)
+        assertEquals("相比上周", c.label(today))
+        assertFalse(c.isEmpty)
+    }
+
+    @Test fun lessSpendingThanLastMonthIsADecrease() {
+        val records = listOf(
+            r(Category.Food, 40000, d(9, 12)),
+            r(Category.Food, 30000, d(10, 5)),
+            r(Category.Salary, 500000, d(10, 5)),
+        )
+        val c = change(records, month(10))
+        assertEquals(month(9), c.previous)
+        assertEquals(-10000, c.deltaCents)
+        assertEquals(Movement.Down, c.movement)
+        assertEquals("-¥100.00", c.amountText)
+        assertEquals("-25.00%", c.percentText)
+        assertEquals("相比上月", c.label(today))
+    }
+
+    @Test fun yearAgainstLastYear() {
+        val records = listOf(
+            r(Category.Food, 400000, d(12, 31, 2025)),
+            r(Category.Food, 300000, d(1, 1)),
+            r(Category.Food, 250000, d(3, 3, 2024)),
+        )
+        val c = change(records, year())
+        assertEquals(year(2025), c.previous)
+        assertEquals(-100000, c.deltaCents)
+        assertEquals("-¥1,000.00", c.amountText)
+        assertEquals("-25.00%", c.percentText)
+        assertEquals("相比去年", c.label(today))
+
+        // 2025 is itself "去年"; its own comparison is with 2024, named by year.
+        val past = change(records, year(2025))
+        assertEquals(year(2024), past.previous)
+        assertEquals(250000, past.previousCents)
+        assertEquals("+60.00%", past.percentText)
+        assertEquals("相比2024年", past.label(today))
+    }
+
+    @Test fun januaryComparesWithTheDecemberBefore() {
+        val now = d(1, 15)
+        val records = listOf(
+            r(Category.Food, 20000, d(12, 31, 2025)),
+            r(Category.Food, 25000, d(1, 2)),
+            r(Category.Food, 90000, d(11, 30, 2025)), // two months back
+        )
+        val c = change(records, month(1), now)
+        assertEquals(month(12, 2025), c.previous)
+        assertEquals(20000, c.previousCents)
+        assertEquals(5000, c.deltaCents)
+        assertEquals("+25.00%", c.percentText)
+        assertEquals("相比上月", c.label(now))
+    }
+
+    @Test fun weekAcrossNewYearComparesWithAllSevenDaysOfTheWeekBefore() {
+        val now = d(1, 7) // Wednesday of week 2
+        val records = listOf(
+            r(Category.Food, 100, d(12, 31, 2025)),
+            r(Category.Food, 200, d(1, 1)),
+            r(Category.Food, 300, d(1, 4)),
+            r(Category.Food, 999, d(12, 28, 2025)), // the week before that
+            r(Category.Food, 60, d(1, 6)),
+        )
+        val c = change(records, week(now), now)
+        assertEquals(d(12, 29, 2025), c.previous.start)
+        assertEquals(600, c.previousCents)
+        assertEquals(60, c.currentCents)
+        assertEquals("-90.00%", c.percentText)
+        assertEquals("相比上周", c.label(now))
+    }
+
+    @Test fun thePreviousTotalHoldsItsFirstAndLastDay() {
+        val records = listOf(
+            r(Category.Food, 100, d(8, 31)),
+            r(Category.Food, 200, d(9, 1)),
+            r(Category.Food, 400, d(9, 30)),
+            r(Category.Food, 800, d(10, 1)),
+        )
+        val c = change(records, month(10))
+        assertEquals(600, c.previousCents)
+        assertEquals(800, c.currentCents)
+    }
+
+    @Test fun nothingBeforeHasNoPercent() {
+        val c = change(listOf(r(Category.Food, 5000, d(10, 27))), week(today))
+        assertEquals(0, c.previousCents)
+        assertEquals(Movement.Up, c.movement)
+        assertEquals("+¥50.00", c.amountText)
+        assertNull(c.percent)
+        assertNull(c.percentText)
+        assertFalse(c.isEmpty)
+    }
+
+    @Test fun nothingEitherSideIsEmptyAndFlat() {
+        val c = change(emptyList(), week(today))
+        assertEquals(Movement.Flat, c.movement)
+        assertEquals(0, c.deltaCents)
+        assertTrue(c.isEmpty)
+        assertNull(c.percentText)
+        // Income alone is still nothing spent.
+        assertTrue(change(listOf(r(Category.Salary, 10000, d(10, 27))), week(today)).isEmpty)
+    }
+
+    @Test fun equalSpendingIsFlat() {
+        val c = change(listOf(r(Category.Food, 3000, d(9, 3)), r(Category.Food, 3000, d(10, 3))), month(10))
+        assertEquals(Movement.Flat, c.movement)
+        assertEquals(0, c.deltaCents)
+        assertEquals("0.00", c.percent?.toPlainString())
+        assertEquals("¥0.00", c.amountText)
+        assertFalse(c.isEmpty)
+    }
+
+    @Test fun spendingNothingAfterSpendingIsMinusAHundredPercent() {
+        val c = change(listOf(r(Category.Food, 500, d(9, 3))), month(10))
+        assertEquals(0, c.currentCents)
+        assertEquals(Movement.Down, c.movement)
+        assertEquals("-¥5.00", c.amountText)
+        assertEquals("-100.00%", c.percentText)
+    }
+
+    @Test fun percentRoundsHalfUpToTwoDecimalsAwayFromZero() {
+        fun pct(before: Long, now: Long) =
+            change(listOf(r(Category.Food, before, d(9, 3)), r(Category.Food, now, d(10, 3))), month(10)).percentText
+        assertEquals("+0.13%", pct(800, 801)) // 0.125 exactly
+        assertEquals("-0.13%", pct(800, 799))
+        assertEquals("+0.33%", pct(300, 301)) // 0.333...
+        assertEquals("-0.33%", pct(300, 299))
+        assertEquals("+66.67%", pct(300, 500)) // 66.666...
+        assertEquals("+12.35%", pct(20000, 22469)) // 12.345 exactly
+        assertEquals("-12.35%", pct(20000, 17531))
+        assertEquals("+200.00%", pct(1000, 3000))
+        // A rise too small for two decimals keeps its sign: it did rise.
+        assertEquals("+0.00%", pct(100000, 100001))
+        assertEquals("-0.00%", pct(100000, 99999))
+    }
 }

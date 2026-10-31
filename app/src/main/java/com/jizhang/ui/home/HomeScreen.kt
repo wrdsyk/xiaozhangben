@@ -2,6 +2,7 @@ package com.jizhang.ui.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -72,11 +74,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.jizhang.LedgerState
@@ -147,6 +151,13 @@ fun SharedTransitionScope.HomeScreen(
     }
     val resultDays = remember(results) { MonthSummary.groupByDay(results) }
 
+    // At most one row rests swiped open; scrolling the list (a finger, a fling or a jump to the
+    // top) closes it.
+    val openRow = remember { OpenRow() }
+    LaunchedEffect(listState, openRow) {
+        snapshotFlow { listState.isScrollInProgress }.collect { if (it) openRow.id = null }
+    }
+
     // Dragging the results means reading them: get the keyboard out of the way. Only a finger
     // drag counts — the field's own bring-into-view scroll must not drop the focus it just got.
     val dragging by listState.interactionSource.collectIsDraggedAsState()
@@ -197,6 +208,7 @@ fun SharedTransitionScope.HomeScreen(
                             day = day,
                             state = state,
                             justAdded = justAdded,
+                            openRow = openRow,
                             animatedScope = animatedScope,
                             onOpen = onOpen,
                             onEdit = onEdit,
@@ -230,6 +242,7 @@ fun SharedTransitionScope.HomeScreen(
                     day = day,
                     state = state,
                     justAdded = justAdded,
+                    openRow = openRow,
                     animatedScope = animatedScope,
                     onOpen = onOpen,
                     onEdit = onEdit,
@@ -440,6 +453,7 @@ private fun SharedTransitionScope.DayCard(
     day: DayGroup,
     state: LedgerState,
     justAdded: Long?,
+    openRow: OpenRow,
     animatedScope: AnimatedVisibilityScope,
     onOpen: (Record) -> Unit,
     onEdit: (Record, Offset) -> Unit,
@@ -475,10 +489,34 @@ private fun SharedTransitionScope.DayCard(
         }
         day.records.forEach { r ->
             androidx.compose.runtime.key(r.id) {
-                SwipeRow(r, highlight = r.id == justAdded, animatedScope, onOpen, onEdit, onDelete, onJustAddedShown)
+                SwipeRow(r, highlight = r.id == justAdded, openRow, animatedScope, onOpen, onEdit, onDelete, onJustAddedShown)
             }
         }
     }
+}
+
+/** The list's swiped-open row, if any. Opening another row or scrolling closes it. */
+private class OpenRow {
+    var id by mutableStateOf<Long?>(null)
+}
+
+/** How far a swipe uncovers the 确认删除 button, and where it settles. */
+private val RevealWidth = 104.dp
+
+/** Release speed (px/s) at which a flick decides open or closed whatever the distance. */
+private const val FlickSpeed = 1000f
+
+/** A finger past the open position moves the row only 30% as far. */
+private fun pull(pos: Float, delta: Float, open: Float): Float {
+    var p = pos
+    var d = delta
+    if (d < 0f && p > -open) {
+        val free = minOf(-d, p + open)
+        p -= free
+        d += free
+    }
+    if (d < 0f) d *= .3f
+    return (p + d).coerceIn(-open * 1.25f, 0f)
 }
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -486,6 +524,7 @@ private fun SharedTransitionScope.DayCard(
 private fun SharedTransitionScope.SwipeRow(
     r: Record,
     highlight: Boolean,
+    openRow: OpenRow,
     animatedScope: AnimatedVisibilityScope,
     onOpen: (Record) -> Unit,
     onEdit: (Record, Offset) -> Unit,
@@ -495,13 +534,19 @@ private fun SharedTransitionScope.SwipeRow(
     val c = LedgerTheme.colors
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     // Plain remember, not rememberSaveable: a row restored by undo must come back settled,
     // not in the swiped-away position the list would otherwise restore.
     var drag by remember { mutableFloatStateOf(0f) }
     var width by remember { mutableIntStateOf(0) }
+    // Dragged past the threshold, or resting open: letting go (or staying) leaves the button out.
     var armed by remember { mutableStateOf(false) }
+    var touching by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
-    val threshold = width * .4f
+    var settleJob by remember { mutableStateOf<Job?>(null) }
+    // Read through width at call time so the long-lived collector below never sees a stale size.
+    val revealPx = with(density) { RevealWidth.toPx() }
+    fun openAt() = minOf(revealPx, width.toFloat())
 
     // A freshly saved row grows in from zero height with a warm glow (prototype "rowIn").
     val grow = remember { Animatable(if (highlight) 0f else 1f) }
@@ -514,10 +559,52 @@ private fun SharedTransitionScope.SwipeRow(
         onJustAddedShown()
     }
 
+    /** Springs the row to open (button showing) or closed; a new drag or settle takes over. */
+    fun settle(open: Boolean, velocity: Float = 0f) {
+        armed = open
+        if (open) openRow.id = r.id else if (openRow.id == r.id) openRow.id = null
+        settleJob?.cancel()
+        settleJob = scope.launch {
+            animate(drag, if (open) -openAt() else 0f, velocity, Motion.layout()) { v, _ -> drag = v }
+        }
+    }
+
+    fun confirmDelete() {
+        if (deleting) return
+        deleting = true
+        haptics.tick()
+        if (openRow.id == r.id) openRow.id = null
+        settleJob?.cancel()
+        settleJob = scope.launch {
+            val end = -width.toFloat()
+            var gone = false
+            animate(drag, end, 0f, Motion.layout()) { v, _ ->
+                drag = v
+                // Delete the moment the row has left, not after the spring's invisible tail.
+                if (!gone && v <= end) {
+                    gone = true
+                    onDelete(r)
+                }
+            }
+            if (!gone) onDelete(r)
+        }
+    }
+
+    // Another row opened or the list scrolled: close this one. A fresh row (undo, scrolled back
+    // in) never claims to be the open one.
+    LaunchedEffect(openRow) {
+        snapshotFlow { openRow.id }.collect { id ->
+            if (touching || deleting) return@collect
+            if (id != r.id && armed) settle(false)
+            else if (id == r.id && !armed) openRow.id = null
+        }
+    }
+
     val dragState = rememberDraggableState { delta ->
         if (deleting) return@rememberDraggableState
-        drag = (drag + delta).coerceIn(-width.toFloat(), 0f)
-        val now = -drag > threshold
+        settleJob?.cancel()
+        drag = pull(drag, delta, openAt())
+        val now = -drag > openAt() * .5f
         if (now != armed) {
             armed = now
             haptics.tick()
@@ -536,33 +623,54 @@ private fun SharedTransitionScope.SwipeRow(
                 dragState,
                 Orientation.Horizontal,
                 enabled = !deleting,
+                onDragStarted = {
+                    touching = true
+                    if (openRow.id != null && openRow.id != r.id) openRow.id = null
+                },
                 onDragStopped = { velocity ->
-                    if (armed || velocity < -2400f) {
-                        deleting = true
-                        animate(drag, -width.toFloat(), velocity, Motion.layout()) { v, _ -> drag = v }
-                        onDelete(r)
-                    } else {
-                        armed = false
-                        animate(drag, 0f, velocity, Motion.layout()) { v, _ -> drag = v }
-                    }
+                    touching = false
+                    // Release only ever opens or closes: deleting waits for the button.
+                    settle(
+                        when {
+                            velocity < -FlickSpeed -> true
+                            velocity > FlickSpeed -> false
+                            else -> armed
+                        },
+                        velocity,
+                    )
                 },
             ),
         contentAlignment = Alignment.CenterEnd,
     ) {
-        // Rows are translucent glass, so only paint the strip the row has uncovered.
-        val revealed = with(LocalDensity.current) { (-drag).toDp() }
+        // Rows are translucent glass, so only paint the strip the row has uncovered. It is also
+        // the 确认删除 button: RecordRow is translated away from it, hit testing included.
+        val revealed = with(density) { (-drag).toDp() }
         if (revealed > 0.dp) {
             val gift = c.hue(com.jizhang.domain.Hue.Gift)
+            val fill by animateColorAsState(
+                if (armed) gift.copy(alpha = .9f) else c.tint(com.jizhang.domain.Hue.Gift), Motion.fade(), label = "swipeFill",
+            )
+            val ink by animateColorAsState(if (armed) c.onTile else gift, Motion.fade(), label = "swipeInk")
+            val labelAlpha by animateFloatAsState(if (revealed > 44.dp) 1f else 0f, Motion.fade(), label = "swipeLabel")
             Box(
                 Modifier
                     .matchParentSize()
                     .wrapContentWidth(Alignment.End)
                     .width(revealed)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(if (armed) gift.copy(alpha = .9f) else c.tint(com.jizhang.domain.Hue.Gift)),
+                    .background(fill)
+                    .tap(label = "确认删除 ${r.title}", pressedScale = .96f, enabled = armed && !deleting) { confirmDelete() },
                 contentAlignment = Alignment.Center,
             ) {
-                if (revealed > 40.dp) Glyph(LedgerIcons.get("trash"), 22.dp, if (armed) c.onTile else gift)
+                // Fixed width, centred in whatever is uncovered: it grows out of the middle.
+                Column(
+                    Modifier.requiredWidth(with(density) { openAt().toDp() }).graphicsLayer { alpha = labelAlpha },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Glyph(LedgerIcons.get("trash"), 20.dp, ink)
+                    Text("确认删除", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = ink, maxLines = 1, softWrap = false)
+                }
             }
         }
         RecordRow(
@@ -572,10 +680,13 @@ private fun SharedTransitionScope.SwipeRow(
                 .offset { IntOffset(drag.roundToInt(), 0) }
                 .background(c.rowGlow.copy(alpha = c.rowGlow.alpha * glow.value))
                 .graphicsLayer { alpha = grow.value.coerceIn(0f, 1f) },
+            // An open row only closes: its taps never open the detail page or the edit sheet.
             onOpen = {
-                if (drag != 0f) scope.launch { animate(drag, 0f, 0f, Motion.layout()) { v, _ -> drag = v } } else onOpen(r)
+                if (deleting) Unit else if (drag != 0f) settle(false) else onOpen(r)
             },
-            onEdit = { origin -> onEdit(r, origin) },
+            onEdit = { origin ->
+                if (deleting) Unit else if (drag != 0f) settle(false) else onEdit(r, origin)
+            },
         )
     }
 }

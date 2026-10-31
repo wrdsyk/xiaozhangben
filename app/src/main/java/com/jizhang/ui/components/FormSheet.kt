@@ -128,6 +128,21 @@ class FormSheetController {
 
 val LocalFormSheet = staticCompositionLocalOf { FormSheetController() }
 
+/**
+ * Keeps every touch that lands on the node from reaching the screens beneath. A full-screen overlay
+ * puts one under its content (a sibling below, not clipped or animated with the content), so a tap
+ * on a gap of the overlay, or outside its growing / sliding bounds, never reaches the screens
+ * beneath. Compose hit-tests the topmost sibling first and stops at its first hit, so it is enough
+ * for the node to be hit: the overlay's own controls keep their touches and this only gets what
+ * they leave.
+ *
+ * It must not consume anything. A consuming ancestor marks every MOVE as consumed after its
+ * children have seen it, and a child's press or drag then reads that in the final pass and cancels
+ * (a finger tap with one tiny move would do nothing). Because it only listens, it is safe both as
+ * a sibling below the content and as a modifier on the content's root.
+ */
+fun Modifier.blockTouches(): Modifier = pointerInput(Unit) { }
+
 @Composable
 fun FormSheetHost(controller: FormSheetController) {
     val c = LedgerTheme.colors
@@ -138,7 +153,8 @@ fun FormSheetHost(controller: FormSheetController) {
     BackHandler(enabled = req != null && controller.backClaims == 0) { controller.close() }
     val scope = remember(controller) { object : FormScope { override fun close() = controller.close() } }
 
-    if (scrim > 0.001f) {
+    // Present from the very frame a form opens (the fade has not moved yet), so no tap slips through.
+    if (req != null || scrim > 0.001f) {
         Box(
             Modifier
                 .fillMaxSize()

@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +54,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,13 +63,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jizhang.LedgerState
 import com.jizhang.LedgerViewModel
 import com.jizhang.ToastMessage
 import com.jizhang.data.GlassFinish
@@ -100,14 +108,20 @@ import com.jizhang.ui.update.UpdateEvents
 import com.jizhang.ui.theme.LedgerIcons
 import com.jizhang.ui.theme.LedgerTheme
 import com.jizhang.ui.theme.Motion
+import com.jizhang.ui.theme.rememberHaptics
 import com.jizhang.ui.theme.rememberThemeReveal
 import com.jizhang.ui.theme.themeReveal
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.time.LocalDateTime
+import java.time.YearMonth
+import kotlin.math.roundToInt
 
 enum class Tab(val label: String, val icon: String) {
     Home("明细", "list"),
@@ -144,6 +158,15 @@ fun LedgerApp(vm: LedgerViewModel) {
         var sheetSeq by remember { mutableStateOf(0L) }
         var fabCenter by remember { mutableStateOf(Offset.Zero) }
         val homeList = rememberLazyListState()
+        val haptics = rememberHaptics()
+        val density = LocalDensity.current
+        // The month header and the hero card are the list's first two items. Once the first visible
+        // item is a day card the hero has scrolled off, the list is being browsed, and the way back
+        // up is a long swipe: that is when the ↑ button is worth showing.
+        val homeScrolled by remember { derivedStateOf { homeList.firstVisibleItemIndex >= HomeLeadingItems } }
+        // The glide to the top is under way: the button stays up until the list has landed.
+        var toTopRunning by remember { mutableStateOf(false) }
+        var revealJob by remember { mutableStateOf<Job?>(null) }
         var entrancePlayed by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
             delay(1_500)
@@ -253,6 +276,24 @@ fun LedgerApp(vm: LedgerViewModel) {
                                         onFabPositioned = { fabCenter = it },
                                         modifier = Modifier.align(Alignment.BottomCenter),
                                     )
+                                    ScrollTopButton(
+                                        visible = tab == Tab.Home && (homeScrolled || toTopRunning),
+                                        onClick = {
+                                            if (!toTopRunning) {
+                                                haptics.tick()
+                                                toTopRunning = true
+                                                scope.launch {
+                                                    // A glide, not a jump.
+                                                    try {
+                                                        homeList.animateScrollToItem(0)
+                                                    } finally {
+                                                        toTopRunning = false
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.align(Alignment.BottomEnd),
+                                    )
                                 }
                             }
                         } else {
@@ -301,12 +342,19 @@ fun LedgerApp(vm: LedgerViewModel) {
                     vm = vm,
                     onClose = { sheet = null },
                     onSave = { req, again ->
-                        vm.save(req.id, req.category, req.cents, req.note, req.at, req.photos)
+                        val opened = sheet?.editing
+                        val saved = vm.save(req.id, req.category, req.cents, req.note, req.at, req.photos)
                         if (!again) {
+                            // An edit opened from the detail page or the stats stays where it is.
+                            val fromList = detailId == null && tab == Tab.Home
                             sheet = null
-                            if (req.id == null) {
-                                tab = Tab.Home
-                                scope.launch { homeList.animateScrollToItem(0) }
+                            if (req.id == null) tab = Tab.Home
+                            // A new bill, or an edit that moved to another day, is followed to where it now sits.
+                            if (req.id == null || (fromList && opened?.date != req.at.toLocalDate())) {
+                                revealJob?.cancel()
+                                revealJob = scope.launch {
+                                    revealBill({ state }, vm::selectMonth, homeList, density, saved, req.at)
+                                }
                             }
                         }
                     },
@@ -344,6 +392,11 @@ private fun SystemBars(statusDark: () -> Boolean, navDark: () -> Boolean) {
     }
 }
 
+// The bar's measurements, shared with ScrollTopButton, which floats over the + button.
+private val BarSide = 20.dp
+private val BarBottom = 16.dp
+private val FabSize = 62.dp
+
 /** Floating glass nav with a sliding lens, plus the + button. Sits above the gesture bar. */
 @Composable
 private fun BottomBar(
@@ -359,11 +412,11 @@ private fun BottomBar(
         modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
+            .padding(start = BarSide, end = BarSide, bottom = BarBottom),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        BoxWithConstraints(Modifier.weight(1f).height(62.dp).glass(31.dp, refract = true).padding(5.dp)) {
+        BoxWithConstraints(Modifier.weight(1f).height(FabSize).glass(31.dp, refract = true).padding(5.dp)) {
             val slot = maxWidth / Tab.entries.size
             Box(
                 Modifier
@@ -386,9 +439,118 @@ private fun BottomBar(
                 }
             }
         }
-        RecordButton(62.dp, onAdd, Modifier.onGloballyPositioned { onFabPositioned(it.boundsInRoot().center) })
+        RecordButton(FabSize, onAdd, Modifier.onGloballyPositioned { onFabPositioned(it.boundsInRoot().center) })
     }
 }
+
+private val TopButtonSize = 48.dp
+
+/**
+ * Round glass ↑ above the + button, centred on it: glides the 明细 list back to the top. It is a
+ * sibling of the bar rather than part of it, so the bar keeps its size and its taps, and a child
+ * placed outside the bar's bounds would not receive touches anyway. Same insets as the bar.
+ */
+@Composable
+private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val c = LedgerTheme.colors
+    Box(
+        modifier
+            .navigationBarsPadding()
+            .padding(end = BarSide + (FabSize - TopButtonSize) / 2, bottom = BarBottom + FabSize + 14.dp),
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(Motion.fade()) + scaleIn(Motion.layout(), initialScale = .6f) + slideInVertically(Motion.offset) { it / 2 },
+            exit = fadeOut(Motion.fade()) + scaleOut(Motion.layout(), targetScale = .6f) + slideOutVertically(Motion.offset) { it / 2 },
+        ) {
+            Box(
+                Modifier
+                    .size(TopButtonSize)
+                    .glass(TopButtonSize / 2)
+                    .semantics { contentDescription = "回到顶部" }
+                    .tap(label = "回到顶部", pressedScale = .92f, onClick = onClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Glyph(LedgerIcons.get("arrow-up", 2.2f), 20.dp, c.ink)
+            }
+        }
+    }
+}
+
+// HomeScreen's list: item 0 is the "month" header, item 1 the "hero" card, then one DayCard per day
+// of state.days. revealBill counts on that order, so keep it in step with HomeScreen.kt.
+private const val HomeLeadingItems = 2
+
+// A DayCard's geometry (HomeScreen.kt): 6dp padding and a 38dp date row above 60dp bill rows, 8dp below.
+private val CardHead = 44.dp
+private val CardRow = 60.dp
+private val CardFoot = 8.dp
+
+/** Where a bill sits in the 明细 list: its day card's item index, its row in that card, and the card's row count. */
+private class BillSpot(val item: Int, val row: Int, val rows: Int)
+
+/**
+ * Scrolls the 明细 list to the bill [saved] wrote, dated [at], switching to its month once the bill has
+ * landed there. The write lands asynchronously, so this waits (briefly) for the bill to reach [state]
+ * and for the list to be laid out with it before it aims at an item index; if that never happens it
+ * gives up quietly.
+ */
+private suspend fun revealBill(
+    state: () -> LedgerState,
+    selectMonth: (YearMonth) -> Unit,
+    list: LazyListState,
+    density: Density,
+    saved: Deferred<Long>,
+    at: LocalDateTime,
+) {
+    val date = at.toLocalDate()
+    val month = YearMonth.from(date)
+    val spot = withTimeoutOrNull(RevealWaitMs) {
+        val id = saved.await()
+        // Switch months only when the bill is there to show, so the new month never flashes its
+        // empty state (an add has already switched: the ViewModel does it after the insert).
+        snapshotFlow { state().allRecords.any { it.id == id && it.date == date } }.first { it }
+        if (state().month != month) selectMonth(month)
+        val found = snapshotFlow<BillSpot?> {
+            val s = state()
+            val item = s.days.indexOfFirst { it.date == date }
+            if (s.month != month || item < 0) return@snapshotFlow null
+            val records = s.days[item].records
+            val row = records.indexOfFirst { it.id == id }
+            // The list has caught up with the state once it counts the same items.
+            if (row < 0 || list.layoutInfo.totalItemsCount != HomeLeadingItems + s.days.size) {
+                null
+            } else {
+                BillSpot(HomeLeadingItems + item, row, records.size)
+            }
+        }.first { it != null }
+        // A list that was off screen (another tab) still holds its old layout, which can match the
+        // new item count by coincidence. The recomposition and measure for the new state land in
+        // the next frame, so let two frames pass before the layout is read.
+        repeat(2) { withFrameNanos { } }
+        found
+    } ?: return
+
+    val info = list.layoutInfo
+    // While a search is typed the list shows its results (keys "search-…") in place of the month.
+    val firstKey = info.visibleItemsInfo.firstOrNull { it.index > 0 }?.key
+    if (firstKey is String && firstKey.startsWith("search")) return
+
+    val headPx = with(density) { CardHead.toPx() }
+    val rowPx = with(density) { CardRow.toPx() }
+    val billTop = headPx + rowPx * spot.row
+    // Item offsets start at the content area, below the status bar wash; its end is above the bar.
+    val contentEnd = info.viewportEndOffset - info.afterContentPadding
+    val card = info.visibleItemsInfo.firstOrNull { it.index == spot.item }
+    // The bill is already on screen: nothing to chase.
+    if (card != null && card.offset + billTop >= 0 && card.offset + billTop + rowPx <= contentEnd) return
+    // The whole card when it fits; otherwise the bill itself, with the row above it peeking in.
+    val cardPx = headPx + rowPx * spot.rows + with(density) { CardFoot.toPx() }
+    val scrollOffset = if (cardPx <= contentEnd) 0 else (billTop - headPx).roundToInt().coerceAtLeast(0)
+    list.animateScrollToItem(spot.item, scrollOffset)
+}
+
+private const val RevealWaitMs = 2_000L
 
 /** Glass pill that drops in from the top; delete toasts carry an undo button. */
 @Composable

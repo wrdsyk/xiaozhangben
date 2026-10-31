@@ -7,6 +7,7 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -79,15 +80,19 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jizhang.LedgerState
+import com.jizhang.domain.BudgetLevel
 import com.jizhang.domain.Category
 import com.jizhang.domain.CategoryShare
 import com.jizhang.domain.Granularity
+import com.jizhang.domain.Movement
 import com.jizhang.domain.Period
 import com.jizhang.domain.Record
 import com.jizhang.domain.Trend
 import com.jizhang.domain.TrendBucket
+import com.jizhang.domain.TrendChange
 import com.jizhang.domain.formatCents
 import com.jizhang.domain.formatCentsShort
+import com.jizhang.ui.budget.levelColor
 import com.jizhang.ui.chipDate
 import com.jizhang.ui.dayLabel
 import com.jizhang.ui.percentLabel
@@ -171,6 +176,8 @@ fun StatsScreen(
     // A pick that lost its last record (deleted meanwhile) falls back to the current period.
     val period = pick?.let { Period.containing(granularity, LocalDate.ofEpochDay(it)) }?.takeIf { it in options } ?: current
     val trend = remember(state.allRecords, period, today) { Trend.of(state.allRecords, period, today) }
+    // The period before needs its own records, which `trend` (this period only) has dropped.
+    val change = remember(state.allRecords, period, today) { TrendChange.of(trend, state.allRecords, today) }
     val anchors = remember { MenuAnchors() }
     // The donut slice picked, as an index into trend.shares (-1: none). It lives up here because the
     // ranking below follows it; a new period (or granularity, or any change of the ledger that
@@ -204,7 +211,7 @@ fun StatsScreen(
                     )
                 }
                 SummaryCard(trend, today, menuOpen, { menuOpen = !menuOpen }, anchors, Modifier.rise(1))
-                TrendCard(trend, Modifier.rise(2))
+                TrendCard(trend, change, today, Modifier.rise(2))
                 ShareCard(trend.shares, trend.totalCents, slice, { slice = it }, Modifier.rise(3))
                 RankingCard(trend, trend.shares.getOrNull(slice), { slice = -1 }, today, onOpenRecord, Modifier.rise(4))
             }
@@ -406,9 +413,10 @@ private class Anchors {
 /**
  * Spending line (Vico) for the chosen period: grows in, gradient area, press and drag for a
  * crosshair. While pressed, a popup card above the crosshair shows that point's top three expenses.
+ * Under the title, [change] says how the period's spending moved against the one before.
  */
 @Composable
-private fun TrendCard(trend: Trend, modifier: Modifier) {
+private fun TrendCard(trend: Trend, change: TrendChange, today: LocalDate, modifier: Modifier) {
     val c = LedgerTheme.colors
     val g = trend.granularity
     val buckets = trend.buckets
@@ -430,13 +438,10 @@ private fun TrendCard(trend: Trend, modifier: Modifier) {
             Modifier.fillMaxWidth().glass(28.dp).padding(top = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                "支出趋势",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = c.ink,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-            )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("支出趋势", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
+                if (buckets.isNotEmpty()) CompareLine(change, today)
+            }
             if (buckets.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(164.dp), contentAlignment = Alignment.Center) {
                     Text("还没开始", fontSize = 13.sp, color = c.sub)
@@ -446,6 +451,42 @@ private fun TrendCard(trend: Trend, modifier: Modifier) {
             }
         }
         if (buckets.isNotEmpty()) ScrubPopup(scrub.value, buckets, g, anchors, Modifier.matchParentSize())
+    }
+}
+
+/**
+ * "相比上周 +¥200.00（+15.85%）": the figures read red when the period spent more than the one before
+ * and green when it spent less (an expense page, so more is bad); equal reads "持平", and with
+ * nothing spent on either side "均无支出". When the period before spent nothing there is no base
+ * for a percent, so only the amount shows. Digits roll like the page's other totals, and the
+ * colour fades when the verdict flips.
+ */
+@Composable
+private fun CompareLine(change: TrendChange, today: LocalDate) {
+    val c = LedgerTheme.colors
+    // levelColor is tuned for bars. As 12sp text on a light glass its green reads at about 3:1 and
+    // its red at 4:1, so on the light themes both go a shade darker (the dark themes need no help).
+    fun ink(level: BudgetLevel) = lerp(c.levelColor(level), Color.Black, .22f * (1f - c.darkness.coerceIn(0f, 1f)))
+    val target = when (change.movement) {
+        Movement.Up -> ink(BudgetLevel.Red)
+        Movement.Down -> ink(BudgetLevel.Green)
+        Movement.Flat -> c.sub
+    }
+    val tone by animateColorAsState(target, Motion.fade(), label = "compareTone")
+    val figures = numberStyle(12.sp, FontWeight.Medium, 0f)
+    // A long amount glides sideways once instead of being cut off, like the summary's figures.
+    AutoScroll(key = change, verticalAlignment = Alignment.CenterVertically) {
+        Text("${change.label(today)} ", fontSize = 12.sp, color = c.sub, maxLines = 1, softWrap = false)
+        if (change.movement == Movement.Flat) {
+            Text(if (change.isEmpty) "均无支出" else "持平", fontSize = 12.sp, color = tone, maxLines = 1, softWrap = false)
+        } else {
+            Odometer(change.amountText, figures, tone)
+            change.percentText?.let { percent ->
+                Text("（", style = figures, color = tone, maxLines = 1, softWrap = false)
+                Odometer(percent, figures, tone)
+                Text("）", style = figures, color = tone, maxLines = 1, softWrap = false)
+            }
+        }
     }
 }
 

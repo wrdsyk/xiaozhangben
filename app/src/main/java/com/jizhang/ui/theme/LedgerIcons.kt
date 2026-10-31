@@ -70,6 +70,8 @@ object LedgerIcons {
         "drag" to listOf("M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"),
         // In-app updates: an arrow down into a tray.
         "update" to listOf("M12 4v11M7.5 10.5L12 15l4.5-4.5", "M5 19.5h14"),
+        // The 明细 list's back-to-top button: an arrow up.
+        "arrow-up" to listOf("M12 19V5", "M6 11l6-6 6 6"),
     )
 
     private val cache = HashMap<Pair<String, Float>, ImageVector>()

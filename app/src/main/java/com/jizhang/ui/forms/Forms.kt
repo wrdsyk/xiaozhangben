@@ -271,6 +271,7 @@ private fun PhotoSource(icon: String, label: String, modifier: Modifier, onClick
 
 @Composable
 fun DateForm(initial: LocalDate, today: LocalDate, onSave: (LocalDate) -> Unit, close: () -> Unit) {
+    // The wheel reports the centred date while it still turns, so 确定 during a fling saves that date.
     var draft by remember { mutableStateOf(initial) }
     FormTitle("日期")
     DateWheel(draft, today) { draft = it }
